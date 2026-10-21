@@ -4,6 +4,7 @@ import {
   Copy,
   ExternalLink,
   FolderOpen,
+  Loader2,
   MonitorPlay,
   Play,
   Server,
@@ -27,6 +28,9 @@ export function PlayerModal({
   const toast = useToast();
   const [selected, setSelected] = useState(0);
   const [copied, setCopied] = useState(false);
+  const [playUrl, setPlayUrl] = useState('');
+  const [resolving, setResolving] = useState(false);
+  const [resolveError, setResolveError] = useState('');
   const [player, setPlayer] = useState({
     iina: true,
     vlc: true,
@@ -42,8 +46,60 @@ export function PlayerModal({
   }, []);
 
   const file = files[selected];
-  const playUrl = file?.proxyUrl ? absoluteUrl(file.proxyUrl) : file?.directUrl || '';
   const shareUrl = resource.url;
+
+  useEffect(() => {
+    if (!file) {
+      setPlayUrl('');
+      setResolveError('');
+      setResolving(false);
+      return;
+    }
+    const localUrl = file.proxyUrl ? absoluteUrl(file.proxyUrl) : file.directUrl || '';
+    if (localUrl) {
+      setPlayUrl(localUrl);
+      setResolveError('');
+      setResolving(false);
+      return;
+    }
+    if (!file.fid) {
+      setPlayUrl('');
+      setResolveError('没有拿到文件 ID，请重新解析资源');
+      setResolving(false);
+      return;
+    }
+
+    let cancelled = false;
+    setPlayUrl('');
+    setResolveError('');
+    setResolving(true);
+    api<{ proxyUrl?: string }>(`/api/resources/${resource.id}/play`, {
+      method: 'POST',
+      body: JSON.stringify({
+        fid: file.fid,
+        shareFidToken: file.shareFidToken,
+        name: file.name,
+        size: file.size,
+      }),
+    })
+      .then((result) => {
+        if (cancelled) return;
+        if (!result.proxyUrl) throw new Error('服务端没有返回播放地址');
+        setPlayUrl(absoluteUrl(result.proxyUrl));
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setResolveError(error instanceof Error ? error.message : String(error));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setResolving(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [file?.fid, file?.proxyUrl, file?.directUrl, file?.shareFidToken, resource.id]);
 
   const protocols = useMemo(
     () => ({
@@ -95,9 +151,19 @@ export function PlayerModal({
             />
           ) : (
             <div className="player-placeholder">
-              <MonitorPlay size={34} />
-              <p>没有拿到可播放直链</p>
-              <span>可以复制分享链接，到夸克 App 或网页中打开。</span>
+              {resolving ? <Loader2 size={34} className="spin" /> : <MonitorPlay size={34} />}
+              <p>
+                {resolving
+                  ? '正在转存并获取直链…'
+                  : resolveError
+                    ? '暂时无法播放'
+                    : '没有拿到可播放直链'}
+              </p>
+              <span>
+                {resolving
+                  ? '首次播放会把文件转存到你的夸克「影巢播放缓存」目录，通常需要几秒。'
+                  : resolveError || '可以复制分享链接，到夸克 App 或网页中打开。'}
+              </span>
             </div>
           )}
 
@@ -145,7 +211,7 @@ export function PlayerModal({
           </div>
 
           <p className="player-tip">
-            外部播放器需要先在「设置 → 播放器」中启用。IINA / VLC 会直接打开代理直链；PotPlayer 适用于 Windows。
+            夸克分享首次播放会按需转存到你的「影巢播放缓存」目录，之后再次播放会直接复用。浏览器无法播放 MKV / H.265 时，请改用 IINA 或 VLC。外部播放器需要先在「设置 → 播放器」中启用。
           </p>
         </div>
 
@@ -167,7 +233,7 @@ export function PlayerModal({
                 </span>
                 <span className="player-file-name">{entry.name}</span>
                 <span className="player-file-size">
-                  {entry.sizeLabel || formatBytes(entry.size) || (entry.proxyUrl ? '可播放' : '无直链')}
+                  {entry.sizeLabel || formatBytes(entry.size) || '播放'}
                 </span>
               </button>
             ))}

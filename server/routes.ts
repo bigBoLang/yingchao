@@ -41,6 +41,7 @@ import {
   formatBytes,
   getQuarkCookie,
   parseQuarkShare,
+  resolveQuarkFileDownload,
   resolveQuarkShare,
   signPlayUrl,
   verifyPlayToken,
@@ -483,6 +484,42 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
+  app.post('/api/resources/:id/play', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const resource = getResource(id);
+    if (!resource) {
+      reply.code(404);
+      return { error: '资源不存在' };
+    }
+    const body = (request.body || {}) as {
+      fid?: string;
+      shareFidToken?: string;
+      name?: string;
+      size?: number;
+    };
+    if (!body.fid) {
+      reply.code(400);
+      return { error: '缺少文件 ID' };
+    }
+    if (!parseQuarkShare(resource.url, resource.password)) {
+      reply.code(400);
+      return { error: '该资源不是夸克分享' };
+    }
+    try {
+      return await resolveQuarkFileDownload({
+        shareUrl: resource.url,
+        password: resource.password,
+        fid: body.fid,
+        shareFidToken: body.shareFidToken,
+        name: body.name,
+        size: Number(body.size || 0),
+      });
+    } catch (error) {
+      reply.code(400);
+      return { error: errorMessage(error) };
+    }
+  });
+
   app.get('/api/config', async () => ({
     name: '影巢',
     version: '0.1.0',
@@ -571,7 +608,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
           method: request.method === 'HEAD' ? 'HEAD' : 'GET',
           headers,
           redirect: 'follow',
-          signal: AbortSignal.timeout(60 * 60 * 1000),
+          signal: AbortSignal.timeout(6 * 60 * 60 * 1000),
         });
         reply.code(upstream.status);
         for (const key of [

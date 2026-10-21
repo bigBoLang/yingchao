@@ -171,24 +171,150 @@ async function fetchShareDetail(
   return body.data?.list || [];
 }
 
-async function getDownloadUrl(
+const QUARK_SAVE_FOLDER = '影巢播放缓存';
+const QUARK_ELECTRON_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.56 Chrome/100.0.4896.160 Electron/18.3.5.12-a038f7b798 Safari/537.36 Channel/pckk_other_ch';
+
+interface QuarkDriveItem {
+  fid?: string;
+  file_name?: string;
+  dir?: boolean;
+  size?: number;
+}
+
+async function listDriveFolder(pdirFid: string, cookie: string): Promise<QuarkDriveItem[]> {
+  const params = new URLSearchParams({
+    pr: 'ucpro',
+    fr: 'pc',
+    uc_param_str: '',
+    pdir_fid: pdirFid,
+    _page: '1',
+    _size: '200',
+    _fetch_total: '1',
+    _sort: 'file_type:asc,file_name:asc',
+  });
+  const response = await fetch(`${QUARK_API}/file/sort?${params.toString()}`, {
+    headers: quarkHeaders(cookie),
+    signal: AbortSignal.timeout(15000),
+  });
+  const body = (await response.json()) as {
+    code?: number;
+    message?: string;
+    data?: { list?: QuarkDriveItem[] };
+  };
+  if (Number(body.code) !== 0) {
+    throw new Error(quarkErrorMessage(Number(body.code), body.message));
+  }
+  return body.data?.list || [];
+}
+
+async function ensureSaveFolder(cookie: string): Promise<string> {
+  const items = await listDriveFolder('0', cookie);
+  const existing = items.find((item) => item.dir && item.file_name === QUARK_SAVE_FOLDER);
+  if (existing?.fid) return String(existing.fid);
+
+  const response = await fetch(`${QUARK_API}/file?pr=ucpro&fr=pc&uc_param_str=`, {
+    method: 'POST',
+    headers: { ...quarkHeaders(cookie), 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      pdir_fid: '0',
+      file_name: QUARK_SAVE_FOLDER,
+      dir_path: '',
+      dir_init_lock: false,
+    }),
+    signal: AbortSignal.timeout(15000),
+  });
+  const body = (await response.json()) as {
+    code?: number;
+    message?: string;
+    data?: { fid?: string };
+  };
+  if (Number(body.code) === 0 && body.data?.fid) return String(body.data.fid);
+
+  // 并发创建或重名时重新查一次
+  const again = await listDriveFolder('0', cookie);
+  const folder = again.find((item) => item.dir && item.file_name === QUARK_SAVE_FOLDER);
+  if (folder?.fid) return String(folder.fid);
+  throw new Error(body.message || '无法创建夸克转存目录');
+}
+
+async function resolveSaveTask(data: unknown, cookie: string): Promise<string> {
+  const record = (data || {}) as {
+    task_id?: string;
+    task_resp?: {
+      data?: { status?: number; save_as?: Record<string, string[]> };
+    };
+  };
+  const immediate =
+    record.task_resp?.data?.save_as?.save_as_top_fids?.[0] ||
+    record.task_resp?.data?.save_as?.save_as_select_top_fids?.[0];
+  if (immediate) return immediate;
+
+  const taskId = record.task_id;
+  if (!taskId) throw new Error('夸克没有返回转存任务');
+  for (let index = 0; index < 30; index++) {
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    const params = new URLSearchParams({
+      pr: 'ucpro',
+      fr: 'pc',
+      uc_param_str: '',
+      task_id: taskId,
+      retry_index: String(index),
+    });
+    const response = await fetch(`${QUARK_API}/task?${params.toString()}`, {
+      headers: quarkHeaders(cookie),
+      signal: AbortSignal.timeout(15000),
+    });
+    const body = (await response.json()) as {
+      code?: number;
+      message?: string;
+      data?: { status?: number; save_as?: Record<string, string[]> };
+    };
+    if (Number(body.code) === 32003) {
+      throw new Error('夸克网盘容量不足，无法转存这个文件');
+    }
+    if (Number(body.code) !== 0) {
+      throw new Error(quarkErrorMessage(Number(body.code), body.message));
+    }
+    const saveAs = body.data?.save_as;
+    const savedFid =
+      saveAs?.save_as_top_fids?.[0] || saveAs?.save_as_select_top_fids?.[0];
+    if (body.data?.status === 2 && savedFid) return savedFid;
+    if (body.data?.status === 3) throw new Error('夸克转存任务失败');
+  }
+  throw new Error('夸克转存超时，请稍后重试');
+}
+
+async function saveShareFile(
   shareId: string,
   stoken: string,
-  item: QuarkListItem,
+  file: { fid: string; name: string; size: number; shareFidToken: string },
+  folderFid: string,
   cookie: string,
-): Promise<string> {
+): Promise<{ fid: string; reused: boolean }> {
+  const existing = (await listDriveFolder(folderFid, cookie)).find(
+    (item) =>
+      !item.dir &&
+      item.file_name === file.name &&
+      (!file.size || Number(item.size || 0) === file.size),
+  );
+  if (existing?.fid) return { fid: String(existing.fid), reused: true };
+
   const response = await fetch(
-    `${QUARK_API}/share/sharepage/download?pr=ucpro&fr=pc&uc_param_str=`,
+    `${QUARK_API}/share/sharepage/save?pr=ucpro&fr=pc&uc_param_str=`,
     {
       method: 'POST',
       headers: { ...quarkHeaders(cookie), 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        fids: [item.fid],
+        fid_list: [file.fid],
+        fid_token_list: [file.shareFidToken],
+        to_pdir_fid: folderFid,
         pwd_id: shareId,
         stoken,
-        fids_token: [item.share_fid_token || ''],
+        pdir_fid: '0',
+        scene: 'link',
       }),
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(20000),
     },
   );
   const body = (await response.json()) as {
@@ -199,7 +325,32 @@ async function getDownloadUrl(
   if (Number(body.code) !== 0) {
     throw new Error(quarkErrorMessage(Number(body.code), body.message));
   }
-  const data = body.data;
+  return { fid: await resolveSaveTask(body.data, cookie), reused: false };
+}
+
+async function requestDownloadUrl(fid: string, cookie: string, ua: string): Promise<{
+  code: number;
+  message: string;
+  url: string;
+}> {
+  const response = await fetch(
+    `${QUARK_API}/file/download?pr=ucpro&fr=pc&uc_param_str=&sys=win32&ve=2.5.56&ut=&guid=`,
+    {
+      method: 'POST',
+      headers: {
+        ...quarkHeaders(cookie),
+        'User-Agent': ua,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ fids: [fid] }),
+      signal: AbortSignal.timeout(20000),
+    },
+  );
+  const body = (await response.json()) as {
+    code?: number;
+    message?: string;
+    data?: unknown;
+  };
   const findUrl = (value: unknown): string => {
     if (!value) return '';
     if (typeof value === 'string' && /^https?:/i.test(value)) return value;
@@ -212,7 +363,7 @@ async function getDownloadUrl(
     }
     if (typeof value === 'object') {
       const record = value as Record<string, unknown>;
-      for (const key of ['download_url', 'url', 'play_url', 'downloadUrl']) {
+      for (const key of ['download_url', 'downloadUrl', 'url', 'play_url']) {
         if (typeof record[key] === 'string' && /^https?:/i.test(record[key])) {
           return record[key];
         }
@@ -224,7 +375,91 @@ async function getDownloadUrl(
     }
     return '';
   };
-  return findUrl(data);
+  return {
+    code: Number(body.code ?? -1),
+    message: body.message || '',
+    url: findUrl(body.data),
+  };
+}
+
+async function getFileDownloadUrl(fid: string, cookie: string): Promise<string> {
+  let result = await requestDownloadUrl(fid, cookie, config.userAgent);
+  // 免费账号对大文件会返回 23018，换成桌面客户端 UA 可以拿到直链。
+  if (result.code === 23018) {
+    result = await requestDownloadUrl(fid, cookie, QUARK_ELECTRON_UA);
+  }
+  if (result.code !== 0) {
+    throw new Error(quarkErrorMessage(result.code, result.message));
+  }
+  if (!result.url) throw new Error('夸克没有返回下载直链');
+  return result.url;
+}
+
+async function findShareFileToken(
+  shareId: string,
+  stoken: string,
+  fid: string,
+  cookie: string,
+): Promise<string> {
+  const queue: Array<{ fid: string; depth: number }> = [{ fid: '0', depth: 0 }];
+  let visited = 0;
+  while (queue.length && visited < 40) {
+    const current = queue.shift()!;
+    visited++;
+    const list = await fetchShareDetail(shareId, stoken, current.fid, cookie);
+    for (const item of list) {
+      if (String(item.fid || '') === fid) return String(item.share_fid_token || '');
+      const isDir = Boolean(item.dir) || Number(item.file_type) === 0;
+      if (isDir && current.depth < 4) {
+        queue.push({ fid: String(item.fid || ''), depth: current.depth + 1 });
+      }
+    }
+  }
+  return '';
+}
+
+export async function resolveQuarkFileDownload(options: {
+  shareUrl: string;
+  password?: string;
+  fid: string;
+  shareFidToken?: string;
+  name?: string;
+  size?: number;
+}): Promise<{ proxyUrl: string; savedFid: string; reused: boolean }> {
+  const ref = parseQuarkShare(options.shareUrl, options.password);
+  if (!ref) throw new Error('不是有效的夸克分享链接');
+  if (!options.fid) throw new Error('缺少文件 ID');
+  const cookie = getQuarkCookie();
+  if (!cookie) {
+    throw new Error('解析播放需要先配置夸克 Cookie');
+  }
+  const token = await getQuarkShareToken(ref.shareId, ref.password);
+  if (!token.ok || !token.stoken) throw new Error(token.message);
+
+  const shareFidToken =
+    options.shareFidToken ||
+    (await findShareFileToken(ref.shareId, token.stoken, options.fid, cookie));
+  if (!shareFidToken) throw new Error('没有找到文件的分享凭证，请重新解析');
+
+  const folderFid = await ensureSaveFolder(cookie);
+  const saved = await saveShareFile(
+    ref.shareId,
+    token.stoken,
+    {
+      fid: options.fid,
+      name: options.name || options.fid,
+      size: Number(options.size || 0),
+      shareFidToken,
+    },
+    folderFid,
+    cookie,
+  );
+  const directUrl = await getFileDownloadUrl(saved.fid, cookie);
+  return {
+    proxyUrl: signPlayUrl(directUrl, 'https://pan.quark.cn/'),
+    savedFid: saved.fid,
+    reused: saved.reused,
+  };
 }
 
 export async function resolveQuarkShare(
@@ -291,38 +526,12 @@ export async function resolveQuarkShare(
     };
   }
 
-  const resolved: QuarkFile[] = [];
-  for (const file of videos) {
-    try {
-      const directUrl = await getDownloadUrl(
-        ref.shareId,
-        token.stoken,
-        { fid: file.fid, share_fid_token: file.shareFidToken },
-        cookie,
-      );
-      if (directUrl) {
-        const { shareFidToken: _token, ...publicFile } = file;
-        resolved.push({
-          ...publicFile,
-          directUrl,
-          proxyUrl: signPlayUrl(directUrl, 'https://pan.quark.cn/'),
-        });
-      } else {
-        const { shareFidToken: _token, ...publicFile } = file;
-        resolved.push(publicFile);
-      }
-    } catch {
-      const { shareFidToken: _token, ...publicFile } = file;
-      resolved.push(publicFile);
-    }
-  }
-
+  // 夸克分享文件不能直接取下载直链，必须转存到自己的网盘后再取。
+  // 这里只返回文件列表和分享凭证，真正播放时再按需转存单个文件。
   return {
     shareId: ref.shareId,
-    files: resolved,
-    message: resolved.some((file) => file.proxyUrl)
-      ? ''
-      : '未能生成直链，可能是 Cookie 失效、分享受限或需要会员权限。可复制分享链接到夸克中打开。',
+    files: videos,
+    message: '',
   };
 }
 
