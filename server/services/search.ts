@@ -75,7 +75,18 @@ export async function searchSubjectResources(
   const results = await runChannelSearches(query, channels);
   const deduped = dedupeLinks(results, subject.title);
   // 只保留标题确实相关的链接；搜索源在关键词命不中时经常返回频道里的无关内容。
-  const selected = deduped.filter((item) => item.score >= 0.18).slice(0, 80);
+  const relevant = deduped.filter((item) => item.score >= 0.18);
+  // 公开索引里常见同一标题生成几十个分享链接，按标题限制展示数量，避免刷屏。
+  const titleCount = new Map<string, number>();
+  const selected = relevant
+    .filter(({ link }) => {
+      const key = (link.title || link.url).replace(/\s+/g, '').toLowerCase();
+      const count = titleCount.get(key) || 0;
+      if (count >= 5) return false;
+      titleCount.set(key, count + 1);
+      return true;
+    })
+    .slice(0, 80);
 
   const persisted: Resource[] = [];
   for (const { link, score } of selected) {
