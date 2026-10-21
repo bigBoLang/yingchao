@@ -422,7 +422,6 @@ export async function resolveQuarkFileDownload(options: {
   shareUrl: string;
   password?: string;
   fid: string;
-  shareFidToken?: string;
   name?: string;
   size?: number;
 }): Promise<{ proxyUrl: string; savedFid: string; reused: boolean }> {
@@ -436,9 +435,14 @@ export async function resolveQuarkFileDownload(options: {
   const token = await getQuarkShareToken(ref.shareId, ref.password);
   if (!token.ok || !token.stoken) throw new Error(token.message);
 
-  const shareFidToken =
-    options.shareFidToken ||
-    (await findShareFileToken(ref.shareId, token.stoken, options.fid, cookie));
+  // share_fid_token 是一次性凭证：每次转存前都要用当前 stoken 重新获取，
+  // 不能复用解析列表时拿到的旧 token，否则会报“转存文件token校验异常”。
+  const shareFidToken = await findShareFileToken(
+    ref.shareId,
+    token.stoken,
+    options.fid,
+    cookie,
+  );
   if (!shareFidToken) throw new Error('没有找到文件的分享凭证，请重新解析');
 
   const folderFid = await ensureSaveFolder(cookie);
@@ -479,10 +483,7 @@ export async function resolveQuarkShare(
     throw new Error(token.message);
   }
 
-  interface InternalFile extends QuarkFile {
-    shareFidToken: string;
-  }
-  const files: InternalFile[] = [];
+  const files: QuarkFile[] = [];
   const queue: Array<{ fid: string; path: string; depth: number }> = [
     { fid: '0', path: '', depth: 0 },
   ];
@@ -507,7 +508,6 @@ export async function resolveQuarkShare(
         size: Number(item.size || 0),
         isDir: false,
         path,
-        shareFidToken: String(item.share_fid_token || ''),
       });
     }
     if (!list.length && current.fid === '0') {
@@ -527,7 +527,7 @@ export async function resolveQuarkShare(
   }
 
   // 夸克分享文件不能直接取下载直链，必须转存到自己的网盘后再取。
-  // 这里只返回文件列表和分享凭证，真正播放时再按需转存单个文件。
+  // 这里只返回文件列表，真正播放时再按需转存单个文件。
   return {
     shareId: ref.shareId,
     files: videos,

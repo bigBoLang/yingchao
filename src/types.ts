@@ -211,7 +211,6 @@ export interface QuarkFile {
   size: number;
   isDir: boolean;
   path: string;
-  shareFidToken?: string;
   directUrl?: string;
   proxyUrl?: string;
   sizeLabel?: string;

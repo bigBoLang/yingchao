@@ -77,7 +77,6 @@ export function PlayerModal({
       method: 'POST',
       body: JSON.stringify({
         fid: file.fid,
-        shareFidToken: file.shareFidToken,
         name: file.name,
         size: file.size,
       }),
@@ -99,7 +98,7 @@ export function PlayerModal({
     return () => {
       cancelled = true;
     };
-  }, [file?.fid, file?.proxyUrl, file?.directUrl, file?.shareFidToken, resource.id]);
+  }, [file?.fid, file?.proxyUrl, file?.directUrl, resource.id]);
 
   const protocols = useMemo(
     () => ({

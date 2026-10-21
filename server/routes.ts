@@ -493,7 +493,6 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     }
     const body = (request.body || {}) as {
       fid?: string;
-      shareFidToken?: string;
       name?: string;
       size?: number;
     };
@@ -510,7 +509,6 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
         shareUrl: resource.url,
         password: resource.password,
         fid: body.fid,
-        shareFidToken: body.shareFidToken,
         name: body.name,
         size: Number(body.size || 0),
       });
