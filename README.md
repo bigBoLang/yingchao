@@ -211,7 +211,8 @@ curl -X POST http://127.0.0.1:8787/api/channels \
 1. 详情页选择一条夸克资源，点击解析。
 2. 后端调用夸克接口换取分享 token、列出文件、取得下载直链。
 3. 直链会封装成带签名的 `/api/play/:token` 地址，支持 HTTP Range，可拖动进度条。
-4. 也可以选择用 IINA / VLC / PotPlayer / MPV 打开同一个代理地址。
+4. 代理会把夸克直链的 Range 拆成多个 8 MB 分片并发拉取，再按顺序转发给播放器；会员账号的多连接带宽可以被真正利用，单连接限速时也能明显提升大文件播放的缓冲速度。
+5. 也可以选择用 IINA / VLC / PotPlayer / MPV 打开同一个代理地址。
 
 非夸克网盘或未配置 Cookie 时，仍可复制分享链接到对应 App 打开。Cookie 只保存在本地 SQLite，不会上传到第三方。
 
@@ -279,6 +280,7 @@ server/
   db.ts             SQLite 表结构、仓储、设置、任务
   douban.ts         豆瓣榜单/搜索/详情
   quark.ts          夸克 token、文件列表、直链、签名
+  quark-stream.ts   夸克直链多分片并发拉流
   mobile.ts         移动云盘分享、文件列表、HLS 播放地址
   validator.ts      资源有效性检测
   scheduler.ts      定时任务

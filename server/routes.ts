@@ -52,6 +52,7 @@ import {
   resolveMobileFilePlay,
   resolveMobileShare,
 } from './mobile.js';
+import { openQuarkRangeStream } from './quark-stream.js';
 import { runJob } from './scheduler.js';
 
 const PLAYER_DEFAULTS = {
@@ -662,6 +663,27 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       }
       const range = request.headers.range;
       if (range) headers.Range = range;
+
+      // 夸克直链单连接带宽有限。对非 HLS 的视频流拆成多段并发拉取，
+      // 让有会员的账号真正跑满多连接带宽；失败时自动回退到单流。
+      if (isQuark && request.method !== 'HEAD' && !isHlsUrl(target.url)) {
+        const abortParallel = new AbortController();
+        reply.raw.on('close', () => abortParallel.abort());
+        const parallel = await openQuarkRangeStream({
+          url: target.url,
+          headers,
+          range,
+          signal: abortParallel.signal,
+        });
+        if (parallel) {
+          reply.code(parallel.status);
+          for (const [key, value] of Object.entries(parallel.headers)) {
+            reply.header(key, value);
+          }
+          reply.raw.on('close', parallel.cancel);
+          return reply.send(parallel.stream);
+        }
+      }
 
       try {
         const upstream = await fetch(target.url, {
