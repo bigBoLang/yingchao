@@ -44,8 +44,14 @@ import {
   resolveQuarkFileDownload,
   resolveQuarkShare,
   signPlayUrl,
+  signShortPlayUrl,
   verifyPlayToken,
 } from './quark.js';
+import {
+  parseMobileShare,
+  resolveMobileFilePlay,
+  resolveMobileShare,
+} from './mobile.js';
 import { runJob } from './scheduler.js';
 
 const PLAYER_DEFAULTS = {
@@ -95,6 +101,43 @@ async function ensureLocalSubjects(): Promise<void> {
 
 function sanitizeType(value: unknown): MediaType | '' {
   return value === 'movie' || value === 'tv' ? value : '';
+}
+
+function isHlsUrl(url: string): boolean {
+  try {
+    return /\.m3u8$/i.test(new URL(url).pathname);
+  } catch {
+    return false;
+  }
+}
+
+function proxifyHlsUri(uri: string, baseUrl: string, referer: string): string {
+  const value = uri.trim();
+  if (!value || /^(data|blob|skd|file):/i.test(value)) return uri;
+  let absolute: URL;
+  try {
+    absolute = new URL(value, baseUrl);
+  } catch {
+    return uri;
+  }
+  if (!/^https?:$/i.test(absolute.protocol)) return uri;
+  return signShortPlayUrl(absolute.toString(), referer);
+}
+
+function rewriteHlsPlaylist(playlist: string, playlistUrl: string, referer: string): string {
+  return playlist
+    .split(/\r?\n/)
+    .map((line) => {
+      if (!line.trim()) return line;
+      if (line.startsWith('#')) {
+        // EXT-X-KEY / EXT-X-MAP / EXT-X-MEDIA 等标签里的 URI 也要走本机代理。
+        return line.replace(/URI="([^"]+)"/g, (_match, uri: string) => {
+          return `URI="${proxifyHlsUri(uri, playlistUrl, referer)}"`;
+        });
+      }
+      return proxifyHlsUri(line, playlistUrl, referer);
+    })
+    .join('\n');
 }
 
 export async function registerRoutes(app: FastifyInstance): Promise<void> {
@@ -455,7 +498,20 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
           })),
         };
       }
-      if (/^https?:\/\//i.test(resource.url) && /\.(mp4|mkv|mov|m4v|webm|ts|flv|avi)(\?|$)/i.test(resource.url)) {
+      if (parseMobileShare(resource.url, resource.password)) {
+        const result = await resolveMobileShare(resource.url, resource.password);
+        return {
+          ...result,
+          files: result.files.map((file) => ({
+            ...file,
+            sizeLabel: formatBytes(file.size),
+          })),
+        };
+      }
+      if (
+        /^https?:\/\//i.test(resource.url) &&
+        /\.(mp4|mkv|mov|m4v|webm|ts|flv|avi|m3u8)(\?|$)/i.test(resource.url)
+      ) {
         return {
           shareId: '',
           files: [
@@ -476,7 +532,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       reply.code(400);
       return {
         error:
-          '该资源不是可直接解析的夸克分享或视频直链。可以先复制链接到对应网盘 App 打开。',
+          '该资源不是可直接解析的夸克/移动云盘分享或视频直链。可以先复制链接到对应网盘 App 打开。',
       };
     } catch (error) {
       reply.code(400);
@@ -500,11 +556,18 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       reply.code(400);
       return { error: '缺少文件 ID' };
     }
-    if (!parseQuarkShare(resource.url, resource.password)) {
-      reply.code(400);
-      return { error: '该资源不是夸克分享' };
-    }
     try {
+      if (parseMobileShare(resource.url, resource.password)) {
+        return await resolveMobileFilePlay({
+          shareUrl: resource.url,
+          password: resource.password,
+          fid: body.fid,
+        });
+      }
+      if (!parseQuarkShare(resource.url, resource.password)) {
+        reply.code(400);
+        return { error: '该资源不是夸克或移动云盘分享' };
+      }
       return await resolveQuarkFileDownload({
         shareUrl: resource.url,
         password: resource.password,
@@ -576,7 +639,6 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       const { token } = request.params as { token: string };
       const target = verifyPlayToken(token);
       reply.header('Access-Control-Allow-Origin', '*');
-      reply.header('Accept-Ranges', 'bytes');
       if (!target) {
         reply.code(403);
         return '播放链接无效或已过期';
@@ -609,6 +671,28 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
           signal: AbortSignal.timeout(6 * 60 * 60 * 1000),
         });
         reply.code(upstream.status);
+
+        const contentType = upstream.headers.get('content-type') || '';
+        const mightBePlaylist =
+          request.method !== 'HEAD' &&
+          (isHlsUrl(target.url) || /mpegurl/i.test(contentType));
+
+        if (mightBePlaylist) {
+          const text = await upstream.text();
+          if (text.trimStart().startsWith('#EXTM3U')) {
+            // HLS 分片、密钥和子播放列表都换成短期本机代理地址，浏览器只和影巢通信。
+            return reply
+              .header('Content-Type', 'application/vnd.apple.mpegurl; charset=utf-8')
+              .header('Cache-Control', 'no-store')
+              .send(rewriteHlsPlaylist(text, target.url, target.referer));
+          }
+          return reply
+            .header('Content-Type', contentType || 'text/plain; charset=utf-8')
+            .header('Cache-Control', 'no-store')
+            .send(text);
+        }
+
+        reply.header('Accept-Ranges', 'bytes');
         for (const key of [
           'content-type',
           'content-length',

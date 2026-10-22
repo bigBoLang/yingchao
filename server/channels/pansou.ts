@@ -1,4 +1,4 @@
-import type { Channel, NormalizedLink, SearchQuery } from '../types.js';
+import type { Channel, CloudType, NormalizedLink, SearchQuery } from '../types.js';
 import { config } from '../config.js';
 import {
   cleanHtml,
@@ -34,6 +34,15 @@ export async function searchPansou(
   if (!baseUrl) throw new Error('未配置 PanSou 地址');
   const searchPath =
     typeof channel.config.searchPath === 'string' ? channel.config.searchPath : '/api/search';
+  const onlyCloudTypes = Array.isArray(channel.config.onlyCloudTypes)
+    ? channel.config.onlyCloudTypes.map(String)
+    : [];
+  const requestedCloud =
+    query.cloudType && query.cloudType !== 'all' ? String(query.cloudType) : '';
+  // 专用于移动云盘的频道，在搜索夸克时直接跳过，避免无意义的网络请求。
+  if (onlyCloudTypes.length && requestedCloud && !onlyCloudTypes.includes(requestedCloud)) {
+    return [];
+  }
   const payload: Record<string, unknown> = {
     // PanSou 的关键词匹配较严格，带上年份反而经常零结果，标题单独检索更稳。
     kw: query.title,
@@ -41,8 +50,10 @@ export async function searchPansou(
     src: typeof channel.config.src === 'string' ? channel.config.src : 'all',
     refresh: false,
   };
-  if (query.cloudType && query.cloudType !== 'all') {
-    payload.cloud_types = [query.cloudType];
+  if (requestedCloud) {
+    payload.cloud_types = [requestedCloud];
+  } else if (onlyCloudTypes.length) {
+    payload.cloud_types = onlyCloudTypes;
   }
   if (Array.isArray(channel.config.channels)) payload.channels = channel.config.channels;
   if (Array.isArray(channel.config.plugins)) payload.plugins = channel.config.plugins;
@@ -162,8 +173,18 @@ export async function testPansou(channel: Channel): Promise<{
 }> {
   const started = Date.now();
   const controller = new AbortController();
+  const onlyCloudTypes = Array.isArray(channel.config.onlyCloudTypes)
+    ? channel.config.onlyCloudTypes
+    : [];
+  const testCloudType = String(
+    channel.config.testCloudType || onlyCloudTypes[0] || 'quark',
+  ) as CloudType;
   const links = await searchPansou(
-    { title: '流浪地球', cloudType: 'quark', maxResults: 10 },
+    {
+      title: testCloudType === 'mobile' ? '电影' : '流浪地球',
+      cloudType: testCloudType,
+      maxResults: 10,
+    },
     channel,
     controller.signal,
   );

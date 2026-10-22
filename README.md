@@ -3,9 +3,10 @@
 豆瓣影视元数据 + 可插拔网盘资源检索。先用豆瓣了解一部片子，再去网盘里找能看的版本。
 
 - **豆瓣目录**：首页榜单、分类浏览、条目详情、演员/类型/评分等元数据均来自豆瓣。
-- **网盘检索**：默认接入 [PanSou](https://github.com/fish2018/pansou)，内置竹云盘搜备用渠道，也可以接入任意返回 JSON 的搜索 API。
+- **网盘检索**：默认接入 [PanSou](https://github.com/fish2018/pansou)，内置竹云盘搜与移动云盘 Telegram 频道，也可以接入任意返回 JSON 的搜索 API。
 - **本地缓存**：热门条目搜到的资源会写入 SQLite，定时巡检链接有效性，热门内容不必每次重新搜索。
-- **外部播放**：夸克分享可解析出文件直链，通过带 Range 支持的本地代理播放；也可唤起 IINA、VLC、PotPlayer、MPV。
+- **资源折叠**：资源较多时按可用性与匹配度优先展示前 3 条，其余可一键展开。
+- **外部播放**：夸克分享可解析出文件直链，通过带 Range 支持的本地代理播放；移动云盘分享通过 HLS 代理播放；也可唤起 IINA、VLC、PotPlayer、MPV。
 
 > 本项目只聚合公开的影视元数据与用户自行配置的搜索渠道，不存储、不传播任何影片文件。请仅将检索结果用于个人学习与已获授权的观看，遵守当地法律与网盘服务条款。
 
@@ -214,6 +215,17 @@ curl -X POST http://127.0.0.1:8787/api/channels \
 
 非夸克网盘或未配置 Cookie 时，仍可复制分享链接到对应 App 打开。Cookie 只保存在本地 SQLite，不会上传到第三方。
 
+## 移动云盘（139）播放
+
+移动云盘分享不需要账号或 Cookie：
+
+1. 在渠道设置里启用「移动云盘（PanSou TG）」，搜索时选择「移动」筛选。
+2. 点击资源的「解析播放」，后端会列出分享中的视频文件。
+3. 移动云盘返回的是 HLS 播放列表，影巢会把播放列表、子列表和 TS 分片统一改写成本机代理地址。
+4. 浏览器通过 hls.js 播放；IINA、VLC 等外部播放器也可以直接打开同一个代理地址。
+
+移动云盘主要支持 MP4 / MKV 等常见格式的在线转码，ISO 原盘通常没有播放地址，因此不会出现在可播放文件列表中。代理地址有有效期，过期后重新解析即可。
+
 ## 定时任务与缓存
 
 | 任务 | 默认周期 | 作用 |
@@ -252,9 +264,10 @@ npm start            # 运行生产构建
 | GET | `/api/admin/overview` | 统计、任务、榜单、渠道总览 |
 | POST | `/api/admin/run` | 手动运行 `collections` / `hot-resources` / `validate` |
 | POST | `/api/resources/:id/check` | 立即检测单条资源 |
-| POST | `/api/resources/:id/resolve` | 解析夸克分享或视频直链 |
+| POST | `/api/resources/:id/resolve` | 解析夸克 / 移动云盘分享或视频直链 |
+| POST | `/api/resources/:id/play` | 获取单个文件的播放代理地址 |
 | GET | `/api/image?url=` | 豆瓣图片代理（绕开防盗链） |
-| GET | `/api/play/:token` | 带签名的播放代理，支持 Range |
+| GET | `/api/play/:token` | 带签名的播放代理，支持 Range 与 HLS 改写 |
 
 ## 目录结构
 
@@ -266,6 +279,7 @@ server/
   db.ts             SQLite 表结构、仓储、设置、任务
   douban.ts         豆瓣榜单/搜索/详情
   quark.ts          夸克 token、文件列表、直链、签名
+  mobile.ts         移动云盘分享、文件列表、HLS 播放地址
   validator.ts      资源有效性检测
   scheduler.ts      定时任务
   channels/         pansou / zhuyun / http 适配器

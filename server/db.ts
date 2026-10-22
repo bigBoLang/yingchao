@@ -742,8 +742,32 @@ export function listJobs(limit = 20): Array<{
   }));
 }
 
+function ensureMobileChannel(): void {
+  if (getSetting<boolean>('mobile_channel_seeded')) return;
+  if (!getChannel('pansou-mobile')) {
+    createChannel({
+      id: 'pansou-mobile',
+      name: '移动云盘（PanSou TG）',
+      type: 'pansou',
+      baseUrl: config.pansouBaseUrl,
+      enabled: true,
+      priority: 15,
+      config: {
+        src: 'tg',
+        channels: ['yunpan139'],
+        onlyCloudTypes: ['mobile'],
+        timeoutMs: 20000,
+      },
+    });
+  }
+  setSetting('mobile_channel_seeded', true);
+}
+
 export function seedDefaults(): void {
-  if (getSetting<boolean>('channels_seeded')) return;
+  if (getSetting<boolean>('channels_seeded')) {
+    ensureMobileChannel();
+    return;
+  }
 
   if (!getChannel('pansou-default')) {
     createChannel({
@@ -788,6 +812,7 @@ export function seedDefaults(): void {
       schedulerEnabled: config.schedulerEnabled,
     });
   }
+  ensureMobileChannel();
   setSetting('channels_seeded', true);
 }
 

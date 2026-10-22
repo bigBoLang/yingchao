@@ -29,12 +29,20 @@ import { CLOUD_LABELS, relativeTime } from '../lib/format';
 const CLOUD_FILTERS: Array<{ value: CloudType | 'all'; label: string }> = [
   { value: 'all', label: '全部' },
   { value: 'quark', label: '夸克' },
+  { value: 'mobile', label: '移动' },
   { value: 'baidu', label: '百度' },
   { value: 'aliyun', label: '阿里' },
   { value: 'uc', label: 'UC' },
   { value: 'xunlei', label: '迅雷' },
   { value: 'magnet', label: '磁力' },
 ];
+
+const STATUS_RANK: Record<Resource['status'], number> = {
+  valid: 0,
+  unknown: 1,
+  locked: 2,
+  invalid: 3,
+};
 
 export function ResourcePanel({
   subject,
@@ -57,6 +65,7 @@ export function ResourcePanel({
   const [channelResults, setChannelResults] = useState<ChannelSearchResult[]>([]);
   const [lastSearchedAt, setLastSearchedAt] = useState(initialSearchState.lastSearchedAt);
   const [player, setPlayer] = useState<{ resource: Resource; files: QuarkFile[] } | null>(null);
+  const [expanded, setExpanded] = useState(false);
   const autoStarted = useRef(false);
 
   const runSearch = async (force = true, cloudType: CloudType | 'all' = cloud) => {
@@ -97,6 +106,21 @@ export function ResourcePanel({
     [resources, cloud],
   );
 
+  const sorted = useMemo(() => {
+    return [...filtered].sort((a, b) => {
+      const statusDiff = STATUS_RANK[a.status] - STATUS_RANK[b.status];
+      if (statusDiff !== 0) return statusDiff;
+      if (b.matchScore !== a.matchScore) return b.matchScore - a.matchScore;
+      return b.lastSeenAt - a.lastSeenAt;
+    });
+  }, [filtered]);
+
+  const visibleResources = expanded ? sorted : sorted.slice(0, 3);
+
+  useEffect(() => {
+    setExpanded(false);
+  }, [cloud, subject.id]);
+
   const channelErrors = channelResults.filter((channel) => channel.error);
   const activeChannels = initialChannels.filter((channel) => channel.enabled);
 
@@ -110,7 +134,7 @@ export function ResourcePanel({
             <span className="resource-count">{resources.length}</span>
           </h2>
           <p>
-            默认检索夸克网盘。链接来自公开搜索渠道，缓存于本地并定期检测可用性。
+            支持夸克与移动云盘。链接来自公开搜索渠道，缓存于本地并定期检测可用性。
           </p>
         </div>
         <div className="resource-panel-actions">
@@ -146,7 +170,7 @@ export function ResourcePanel({
         </div>
         <span className="resource-hint">
           <ShieldCheck size={14} />
-          自动检测夸克分享有效性
+          自动检测夸克 / 移动云盘分享有效性
         </span>
       </div>
 
@@ -208,7 +232,7 @@ export function ResourcePanel({
       ) : null}
 
       <div className="resource-list">
-        {filtered.map((resource) => (
+        {visibleResources.map((resource) => (
           <ResourceCard
             key={resource.id}
             resource={resource}
@@ -222,11 +246,28 @@ export function ResourcePanel({
         ))}
       </div>
 
+      {sorted.length > 3 ? (
+        <div className="resource-more">
+          <span>
+            {expanded
+              ? `已展开全部 ${sorted.length} 条`
+              : `按可用性与匹配度优先展示前 3 条，另有 ${sorted.length - 3} 条`}
+          </span>
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            onClick={() => setExpanded((value) => !value)}
+          >
+            {expanded ? '收起' : `展开全部 ${sorted.length} 条`}
+          </button>
+        </div>
+      ) : null}
+
       {resources.length > 0 ? (
         <div className="resource-footnote">
           <span>
             <Database size={14} />
-            共 {resources.length} 条缓存，当前显示 {filtered.length} 条
+            共 {resources.length} 条缓存，当前显示 {visibleResources.length} 条
           </span>
           <span>失效链接会被隐藏，后台巡检会定期复查。</span>
         </div>

@@ -549,7 +549,52 @@ export function signPlayUrl(url: string, referer = '', ttlSeconds = 6 * 3600): s
   return `/api/play/${encoded}.${signature}`;
 }
 
+// HLS 播放列表里有成百上千个分片。如果把完整的上游 URL 签进每个分片地址，
+// 播放列表会膨胀到数 MB；这里用短 ID 映射到内存，重启后重新解析即可。
+const shortPlayTargets = new Map<
+  string,
+  { url: string; referer: string; expires: number }
+>();
+
+export function signShortPlayUrl(
+  url: string,
+  referer = '',
+  ttlSeconds = 6 * 3600,
+): string {
+  const now = Date.now();
+  if (shortPlayTargets.size > 20000) {
+    for (const [key, value] of shortPlayTargets) {
+      if (value.expires <= now) shortPlayTargets.delete(key);
+    }
+    // 仍然过多时删掉最早的一批，避免长期运行内存无限增长。
+    if (shortPlayTargets.size > 30000) {
+      let remove = shortPlayTargets.size - 20000;
+      for (const key of shortPlayTargets.keys()) {
+        shortPlayTargets.delete(key);
+        if (--remove <= 0) break;
+      }
+    }
+  }
+  const id = crypto.randomBytes(12).toString('base64url');
+  shortPlayTargets.set(id, {
+    url,
+    referer,
+    expires: now + ttlSeconds * 1000,
+  });
+  return `/api/play/s.${id}`;
+}
+
 export function verifyPlayToken(token: string): { url: string; referer: string } | null {
+  if (token.startsWith('s.')) {
+    const id = token.slice(2);
+    const target = shortPlayTargets.get(id);
+    if (!target) return null;
+    if (target.expires <= Date.now()) {
+      shortPlayTargets.delete(id);
+      return null;
+    }
+    return { url: target.url, referer: target.referer };
+  }
   const [encoded, signature] = token.split('.');
   if (!encoded || !signature) return null;
   const expected = crypto

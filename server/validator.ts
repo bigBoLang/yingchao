@@ -5,6 +5,7 @@ import {
   updateResourceCheck,
 } from './db.js';
 import { checkQuarkLink, parseQuarkShare } from './quark.js';
+import { inspectMobileShare, parseMobileShare } from './mobile.js';
 import { mapLimit } from './channels/shared.js';
 import type { Resource } from './types.js';
 
@@ -13,6 +14,8 @@ export async function validateResource(resource: Resource): Promise<Resource> {
 
   if (resource.cloudType === 'quark' || parseQuarkShare(resource.url)) {
     result = await checkQuarkLink(resource.url, resource.password);
+  } else if (resource.cloudType === 'mobile' || parseMobileShare(resource.url, resource.password)) {
+    result = await inspectMobileShare(resource.url, resource.password);
   } else if (resource.cloudType === 'magnet' || resource.cloudType === 'ed2k') {
     result = { status: 'unknown', code: 'p2p', message: '磁力/电驴链接不做在线可用性检测' };
   } else {

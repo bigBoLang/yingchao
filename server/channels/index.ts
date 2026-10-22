@@ -137,6 +137,19 @@ export const CHANNEL_PRESETS = [
     config: {},
   },
   {
+    type: 'pansou',
+    name: '移动云盘（PanSou TG）',
+    baseUrl: 'http://localhost:8888',
+    description:
+      '通过 PanSou 搜索 Telegram 上专门发布移动云盘（139）资源的频道。只在筛选“移动云盘”时发起请求。',
+    config: {
+      src: 'tg',
+      channels: ['yunpan139'],
+      onlyCloudTypes: ['mobile'],
+      timeoutMs: 20000,
+    },
+  },
+  {
     type: 'zhuyun',
     name: '竹云盘搜',
     baseUrl: 'https://pan.zhuyunso.top',

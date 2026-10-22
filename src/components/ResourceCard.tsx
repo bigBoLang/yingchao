@@ -19,7 +19,7 @@ import {
   relativeTime,
 } from '../lib/format';
 
-const DIRECT_VIDEO = /^https?:\/\/.+\.(mp4|mkv|mov|m4v|webm|ts|flv|avi)(\?|$)/i;
+const DIRECT_VIDEO = /^https?:\/\/.+\.(mp4|mkv|mov|m4v|webm|ts|flv|avi|m3u8)(\?|$)/i;
 
 export function ResourceCard({
   resource,
@@ -37,6 +37,8 @@ export function ResourceCard({
   const cloudLabel = CLOUD_LABELS[resource.cloudType] || resource.cloudType;
   const cloudColor = CLOUD_COLORS[resource.cloudType] || CLOUD_COLORS.other;
   const isQuark = resource.cloudType === 'quark';
+  const isMobile = resource.cloudType === 'mobile';
+  const isPlayableShare = isQuark || isMobile;
   const isDirectVideo = DIRECT_VIDEO.test(resource.url);
 
   const copy = async () => {
@@ -113,7 +115,7 @@ export function ResourceCard({
         </div>
 
         <div className="resource-actions">
-          {isQuark ? (
+          {isPlayableShare ? (
             <button type="button" className="btn btn-primary btn-sm" onClick={resolve} disabled={resolving}>
               {resolving ? <Loader2 size={15} className="spin" /> : <Play size={15} fill="currentColor" />}
               {resolving ? '解析中…' : '解析播放'}

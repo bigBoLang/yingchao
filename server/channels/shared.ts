@@ -9,6 +9,7 @@ const CLOUD_PATTERNS: Array<[RegExp, CloudType]> = [
   [/(^|\.)pan\.xunlei\.com$/i, 'xunlei'],
   [/(^|\.)115\.com$/i, '115'],
   [/(^|\.)cloud\.189\.cn$/i, 'tianyi'],
+  [/(^|\.)yun\.139\.com$|(^|\.)caiyun\.139\.com$/i, 'mobile'],
   [/(^|\.)123pan\.com$|(^|\.)123684\.com$|(^|\.)123865\.com$/i, '123'],
   [/(^|\.)pan\.pikpak\.com$/i, 'pikpak'],
   [/(^|\.)guangyapan\.com$/i, 'guangya'],
@@ -49,6 +50,10 @@ export function normalizeCloudType(value: unknown): CloudType {
     123: '123',
     tianyi: 'tianyi',
     mobile: 'mobile',
+    '移动': 'mobile',
+    '移动云盘': 'mobile',
+    '139': 'mobile',
+    '139云盘': 'mobile',
     pikpak: 'pikpak',
     guangya: 'guangya',
     '光鸭': 'guangya',
@@ -81,6 +86,14 @@ export function canonicalizeUrl(raw: string): string {
   if (/^(magnet|ed2k):/i.test(url)) return url;
   try {
     const parsed = new URL(url);
+    // 移动云盘的分享 ID 在 hash 或 query 里，不能直接丢掉 hash。
+    if (/(^|\.)yun\.139\.com$|(^|\.)caiyun\.139\.com$/i.test(parsed.hostname)) {
+      const raw = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+      const mobile = raw.match(
+        /(?:\/shareweb\/#\/w\/i\/|\/sharewap\/#\/m\/i\??|\/w\/i\/|\/m\/i\??)([A-Za-z0-9_-]+)/,
+      );
+      if (mobile) return `https://yun.139.com/shareweb/#/w/i/${mobile[1]}`;
+    }
     // 网盘分享链接统一成短链，去掉跟踪参数；密码单独参与去重。
     const share = parsed.pathname.match(/^\/s\/([A-Za-z0-9_-]+)/);
     if (share) {
