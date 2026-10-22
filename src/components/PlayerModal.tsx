@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   Check,
   Copy,
@@ -10,6 +10,8 @@ import {
   Server,
   Smartphone,
   Terminal,
+  Download,
+  AlertCircle,
 } from 'lucide-react';
 import type { QuarkFile, Resource } from '../types';
 import { api, absoluteUrl, copyText } from '../api';
@@ -21,6 +23,52 @@ import { formatBytes } from '../lib/format';
 function isIOS(): boolean {
   if (typeof navigator === 'undefined') return false;
   return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
+function isMacOS(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return /Macintosh/.test(navigator.userAgent);
+}
+
+function isWindows(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return /Windows/.test(navigator.userAgent);
+}
+
+const PLAYER_DOWNLOADS: Record<string, { name: string; url: string; desc: string }> = {
+  iina: { name: 'IINA', url: 'https://iina.io/', desc: 'macOS 现代播放器，支持 MKV/H.265/4K' },
+  vlc: { name: 'VLC', url: 'https://www.videolan.org/vlc/', desc: '跨平台开源播放器，格式支持全' },
+  potplayer: { name: 'PotPlayer', url: 'https://potplayer.daum.net/', desc: 'Windows 强大播放器，硬解性能好' },
+  mpv: { name: 'MPV', url: 'https://mpv.io/installation/', desc: '极简命令行播放器，需配合脚本' },
+  infuse: { name: 'Infuse', url: 'https://firecore.com/infuse', desc: 'iOS/macOS 顶级播放器，云同步元数据' },
+  nplayer: { name: 'nPlayer', url: 'https://nplayer.tv/', desc: 'iOS 付费播放器，格式支持极全' },
+};
+
+type PlayerKey = keyof typeof PLAYER_DOWNLOADS;
+
+function tryOpenProtocol(url: string, fallbackUrl: string, playerKey: PlayerKey): void {
+  // 尝试打开协议
+  const link = document.createElement('a');
+  link.href = url;
+  link.style.display = 'none';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+
+  // 1.5 秒后检查是否跳转成功（页面可见性变化或 focus 丢失）
+  const timer = window.setTimeout(() => {
+    // 如果协议没唤起应用，浏览器通常会停在当前页，弹一个下载提示
+    if (confirm(`${PLAYER_DOWNLOADS[playerKey].name} 似乎未安装或未响应，是否前往下载页面？`)) {
+      window.open(fallbackUrl, '_blank', 'noopener,noreferrer');
+    }
+  }, 1500);
+
+  // 如果页面失去焦点（应用被唤起），清除定时器
+  const onBlur = () => {
+    window.clearTimeout(timer);
+    window.removeEventListener('blur', onBlur);
+  };
+  window.addEventListener('blur', onBlur, { once: true });
 }
 
 export function PlayerModal({
@@ -60,6 +108,8 @@ export function PlayerModal({
   const shareUrl = resource.url;
   const isMobile = resource.cloudType === 'mobile';
   const ios = isIOS();
+  const mac = isMacOS();
+  const win = isWindows();
 
   useEffect(() => {
     if (!file) {
@@ -125,7 +175,7 @@ export function PlayerModal({
   const protocols = useMemo(
     () => ({
       iina: playUrl ? `iina://weblink?url=${encodeURIComponent(playUrl)}` : '',
-      vlc: playUrl ? `vlc://${playUrl}` : '',
+      vlc: playUrl ? `vlc-x-callback://x-callback-url/stream?url=${encodeURIComponent(playUrl)}` : '',
       potplayer: playUrl ? `potplayer://${playUrl}` : '',
       infuse: playUrl ? `infuse://x-callback-url/play?url=${encodeURIComponent(playUrl)}` : '',
       vlcIos: playUrl ? `vlc-x-callback://x-callback-url/stream?url=${encodeURIComponent(playUrl)}` : '',
@@ -144,6 +194,12 @@ export function PlayerModal({
       toast.push('复制失败，请手动选择文本', 'error');
     }
   };
+
+  const handlePlayerClick = useCallback((playerKey: PlayerKey, protocolUrl: string) => {
+    if (!protocolUrl) return;
+    const download = PLAYER_DOWNLOADS[playerKey];
+    tryOpenProtocol(protocolUrl, download.url, playerKey);
+  }, []);
 
   return (
     <Modal
@@ -196,24 +252,65 @@ export function PlayerModal({
                 </button>
                 {!ios ? (
                   <>
-                    {player.iina ? (
-                      <a className="btn btn-ghost btn-sm" href={protocols.iina}>
+                    {/* macOS 首选 IINA */}
+                    {mac && player.iina ? (
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => handlePlayerClick('iina', protocols.iina)}
+                        title="macOS 推荐：IINA"
+                      >
                         <ExternalLink size={15} />
                         IINA
-                      </a>
+                      </button>
                     ) : null}
-                    {player.vlc ? (
-                      <a className="btn btn-ghost btn-sm" href={protocols.vlc}>
-                        <ExternalLink size={15} />
-                        VLC
-                      </a>
-                    ) : null}
-                    {player.potplayer ? (
-                      <a className="btn btn-ghost btn-sm" href={protocols.potplayer}>
+                    {/* Windows 首选 PotPlayer / VLC */}
+                    {win && player.potplayer ? (
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => handlePlayerClick('potplayer', protocols.potplayer)}
+                        title="Windows 推荐：PotPlayer"
+                      >
                         <ExternalLink size={15} />
                         PotPlayer
-                      </a>
+                      </button>
                     ) : null}
+                    {player.vlc ? (
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => handlePlayerClick('vlc', protocols.vlc)}
+                        title="跨平台：VLC (x-callback-url)"
+                      >
+                        <ExternalLink size={15} />
+                        VLC
+                      </button>
+                    ) : null}
+                    {mac && player.iina ? null : (
+                      player.iina ? (
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => handlePlayerClick('iina', protocols.iina)}
+                        >
+                          <ExternalLink size={15} />
+                          IINA
+                        </button>
+                      ) : null
+                    )}
+                    {win && player.potplayer ? null : (
+                      player.potplayer ? (
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => handlePlayerClick('potplayer', protocols.potplayer)}
+                        >
+                          <ExternalLink size={15} />
+                          PotPlayer
+                        </button>
+                      ) : null
+                    )}
                     {player.mpv ? (
                       <button
                         type="button"
@@ -228,22 +325,34 @@ export function PlayerModal({
                 ) : (
                   <>
                     {player.infuse ? (
-                      <a className="btn btn-ghost btn-sm" href={protocols.infuse}>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => handlePlayerClick('infuse', protocols.infuse)}
+                      >
                         <Smartphone size={15} />
                         Infuse
-                      </a>
+                      </button>
                     ) : null}
                     {player.vlcIos ? (
-                      <a className="btn btn-ghost btn-sm" href={protocols.vlcIos}>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => handlePlayerClick('vlc', protocols.vlcIos)}
+                      >
                         <Smartphone size={15} />
                         VLC
-                      </a>
+                      </button>
                     ) : null}
                     {player.nplayer ? (
-                      <a className="btn btn-ghost btn-sm" href={protocols.nplayer}>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => handlePlayerClick('nplayer', protocols.nplayer)}
+                      >
                         <Smartphone size={15} />
                         nPlayer
-                      </a>
+                      </button>
                     ) : null}
                   </>
                 )}
