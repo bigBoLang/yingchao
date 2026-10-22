@@ -161,6 +161,12 @@ export interface SearchSuggestResponse {
 export interface SettingsResponse {
   quarkCookieSet: boolean;
   quarkCookiePreview: string;
+  quarkTv: {
+    loggedIn: boolean;
+    enabled: boolean;
+    linkMode: 'streaming' | 'download';
+  };
+  quarkNetMode: 'auto' | 'proxy' | 'direct';
   player: {
     iina: boolean;
     vlc: boolean;

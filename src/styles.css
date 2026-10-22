@@ -2197,6 +2197,24 @@ h2 {
   font-size: 11px;
 }
 
+.player-lines {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-bottom: 10px;
+}
+
+.line-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.05);
+}
+
 .player-actions {
   display: flex;
   flex-wrap: wrap;
@@ -2897,6 +2915,35 @@ h2 {
   display: flex;
   gap: 8px;
   align-items: center;
+}
+
+.tv-login {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+
+.tv-login img {
+  width: 160px;
+  height: 160px;
+  border-radius: 8px;
+  background: #fff;
+  padding: 6px;
+}
+
+.tv-login strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.tv-login p {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .cookie-row input {

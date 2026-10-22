@@ -2,6 +2,9 @@ import 'dotenv/config';
 import fs from 'node:fs';
 import path from 'node:path';
 import { EnvHttpProxyAgent, setGlobalDispatcher } from 'undici';
+import dotenv from 'dotenv';
+
+dotenv.config({ override: true });
 
 // 让服务端 fetch 遵循 HTTP(S)_PROXY / NO_PROXY。
 // 某些公共搜索节点会按出口 IP 触发风控，配置本地代理后可以正常访问；
@@ -43,6 +46,11 @@ export const config = {
   validateBatch: num(process.env.VALIDATE_BATCH, 60),
   schedulerEnabled: process.env.SCHEDULER_ENABLED !== 'false',
   appSecret: process.env.APP_SECRET || '',
+  nodeEnv: process.env.NODE_ENV || 'development',
+  // 播放代理模式：'tunnel'=走 Cloudflare Tunnel 域名，'direct'=直连 IP
+  playProxyMode: (process.env.PLAY_PROXY_MODE as 'tunnel' | 'direct') || 'tunnel',
+  // 直连模式下的公网/IP 地址（不含协议和端口，如 192.168.1.100 或 yingchao.example.com）
+  publicIp: process.env.PUBLIC_IP || '',
   userAgent:
     process.env.USER_AGENT ||
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',

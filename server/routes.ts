@@ -1,10 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { Readable } from 'node:stream';
+import { Readable, Transform } from 'node:stream';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { config } from './config.js';
 import {
   createChannel,
+  createUser,
   db,
   deleteChannel,
   getChannel,
@@ -13,6 +14,7 @@ import {
   getRuntimeSettings,
   getSetting,
   getStats,
+  getUserById,
   listChannels,
   listCollections,
   listJobs,
@@ -53,6 +55,15 @@ import {
   resolveMobileShare,
 } from './mobile.js';
 import { openQuarkRangeStream } from './quark-stream.js';
+import {
+  getQuarkTvLinkMode,
+  isQuarkTvEnabled,
+  isQuarkTvLoggedIn,
+  logoutQuarkTv,
+  pollQuarkTvLogin,
+  startQuarkTvLogin,
+} from './quark-tv.js';
+import { getQuarkNetworkMode } from './direct-fetch.js';
 import { runJob } from './scheduler.js';
 
 const PLAYER_DEFAULTS = {
@@ -68,6 +79,46 @@ const PLAYER_DEFAULTS = {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+// 播放代理的实时流量统计：按播放 token 累计已输出的字节，前端轮询换算成网速。
+const playTraffic = new Map<
+  string,
+  {
+    bytes: number;
+    lastBytes: number;
+    lastAt: number;
+    updatedAt: number;
+    concurrency: number;
+  }
+>();
+
+function playTrafficEntry(token: string) {
+  let entry = playTraffic.get(token);
+  if (!entry) {
+    const now = Date.now();
+    entry = { bytes: 0, lastBytes: 0, lastAt: now, updatedAt: now, concurrency: 0 };
+    playTraffic.set(token, entry);
+  }
+  return entry;
+}
+
+function addPlayBytes(token: string, bytes: number) {
+  const entry = playTrafficEntry(token);
+  entry.bytes += bytes;
+  entry.updatedAt = Date.now();
+}
+
+function countPlayBytes(stream: Readable, token: string): Readable {
+  const stats = playTrafficEntry(token);
+  const counter = new Transform({
+    transform(chunk, _encoding, callback) {
+      stats.bytes += chunk.length;
+      stats.updatedAt = Date.now();
+      callback(null, chunk);
+    },
+  });
+  return stream.pipe(counter);
 }
 
 function maskCookie(cookie: string): string {
@@ -395,6 +446,12 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     return {
       quarkCookieSet: Boolean(cookie),
       quarkCookiePreview: maskCookie(cookie),
+      quarkTv: {
+        loggedIn: isQuarkTvLoggedIn(),
+        enabled: getSetting<boolean>('quark_tv_enabled', true) !== false,
+        linkMode: getQuarkTvLinkMode(),
+      },
+      quarkNetMode: getQuarkNetworkMode(),
       player: getSetting('player_prefs', PLAYER_DEFAULTS),
       runtime: getRuntimeSettings(),
       config: {
@@ -409,11 +466,27 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   app.put('/api/settings', async (request, reply) => {
     const body = (request.body || {}) as {
       quarkCookie?: string;
+      quarkTvEnabled?: boolean;
+      quarkTvLinkMode?: 'streaming' | 'download';
+      quarkNetMode?: 'auto' | 'proxy' | 'direct';
       player?: Record<string, unknown>;
       runtime?: Record<string, unknown>;
     };
     if (typeof body.quarkCookie === 'string') {
       setSetting('quark_cookie', body.quarkCookie.trim());
+    }
+    if (typeof body.quarkTvEnabled === 'boolean') {
+      setSetting('quark_tv_enabled', body.quarkTvEnabled);
+    }
+    if (body.quarkTvLinkMode === 'streaming' || body.quarkTvLinkMode === 'download') {
+      setSetting('quark_tv_link_mode', body.quarkTvLinkMode);
+    }
+    if (
+      body.quarkNetMode === 'auto' ||
+      body.quarkNetMode === 'proxy' ||
+      body.quarkNetMode === 'direct'
+    ) {
+      setSetting('quark_network_mode', body.quarkNetMode);
     }
     if (body.player && typeof body.player === 'object') {
       setSetting('player_prefs', { ...PLAYER_DEFAULTS, ...body.player });
@@ -440,9 +513,27 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       ok: true,
       quarkCookieSet: Boolean(cookie),
       quarkCookiePreview: maskCookie(cookie),
+      quarkTv: {
+        loggedIn: isQuarkTvLoggedIn(),
+        enabled: getSetting<boolean>('quark_tv_enabled', true) !== false,
+        linkMode: getQuarkTvLinkMode(),
+      },
+      quarkNetMode: getQuarkNetworkMode(),
       player: getSetting('player_prefs', PLAYER_DEFAULTS),
       runtime: getRuntimeSettings(),
     };
+  });
+
+  app.post('/api/quark-tv/login', async () => startQuarkTvLogin());
+
+  app.get('/api/quark-tv/login/:id', async (request) => {
+    const { id } = request.params as { id: string };
+    return pollQuarkTvLogin(id);
+  });
+
+  app.delete('/api/quark-tv/login', async () => {
+    logoutQuarkTv();
+    return { ok: true };
   });
 
   app.get('/api/admin/overview', async () => {
@@ -555,6 +646,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       fid?: string;
       name?: string;
       size?: number;
+      line?: 'transcode' | 'original';
     };
     if (!body.fid) {
       reply.code(400);
@@ -562,38 +654,91 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     }
     try {
       if (parseMobileShare(resource.url, resource.password)) {
-        return await resolveMobileFilePlay({
+        const result = await resolveMobileFilePlay({
           shareUrl: resource.url,
           password: resource.password,
           fid: body.fid,
         });
+        return {
+          ...result,
+          directHeaders: {
+            'User-Agent': config.userAgent,
+            Referer: 'https://yun.139.com/',
+          },
+        };
       }
       if (!parseQuarkShare(resource.url, resource.password)) {
         reply.code(400);
         return { error: '该资源不是夸克或移动云盘分享' };
       }
-      return await resolveQuarkFileDownload({
+      const result = await resolveQuarkFileDownload({
         shareUrl: resource.url,
         password: resource.password,
         fid: body.fid,
         name: body.name,
         size: Number(body.size || 0),
+        line:
+          body.line === 'transcode' || body.line === 'original'
+            ? body.line
+            : getQuarkTvLinkMode() === 'download'
+              ? 'original'
+              : 'transcode',
       });
+      // 直链模式：夸克 CDN 需要 Cookie + Referer，播放器直连时得自己带上。
+      // 经过 Cloudflare 时不下发 Cookie，避免公网访问者直接拿到登录态。
+      const viaCloudflare = Boolean(
+        request.headers['cf-ray'] || request.headers['cf-connecting-ip'],
+      );
+      return {
+        ...result,
+        directHeaders: {
+          'User-Agent': config.userAgent,
+          Referer: 'https://pan.quark.cn/',
+          ...(viaCloudflare ? {} : { Cookie: getQuarkCookie() }),
+        },
+      };
     } catch (error) {
       reply.code(400);
       return { error: errorMessage(error) };
     }
   });
 
-  app.get('/api/config', async () => ({
-    name: '影巢',
-    version: '0.1.0',
-    hasQuarkCookie: Boolean(getQuarkCookie()),
-    enabledChannels: listChannels(true).length,
-    player: getSetting('player_prefs', PLAYER_DEFAULTS),
-  }));
+  app.get('/api/config', async (request) => {
+    const playProxyMode = config.playProxyMode;
+    let playBaseUrl = request.headers.origin || request.headers.referer || '';
+    if (playBaseUrl) {
+      // 保留 origin（含协议和端口）
+      playBaseUrl = playBaseUrl.replace(/\/+$/, '');
+    } else {
+      // 0.0.0.0 是监听地址不是可访问地址，兜底换成 localhost
+      const host = config.host === '0.0.0.0' ? 'localhost' : config.host;
+      playBaseUrl = `http://${host}:${config.port}`;
+    }
+
+    // 直连模式：使用配置的 publicIp
+    if (playProxyMode === 'direct' && config.publicIp) {
+      const protocol = request.headers['x-forwarded-proto'] || 'http';
+      playBaseUrl = `${protocol}://${config.publicIp}:${config.port}`;
+    }
+
+    return {
+      name: '影巢',
+      version: '0.1.0',
+      hasQuarkCookie: Boolean(getQuarkCookie()),
+      enabledChannels: listChannels(true).length,
+      player: getSetting('player_prefs', PLAYER_DEFAULTS),
+      quarkTv: {
+        loggedIn: isQuarkTvLoggedIn(),
+        enabled: isQuarkTvEnabled(),
+        linkMode: getQuarkTvLinkMode(),
+      },
+      playBaseUrl,
+      playProxyMode,
+    };
+  });
 
   // 图片代理：豆瓣图片有防盗链，统一从服务端转发。
+// 使用 undici 的 fetch 并显式指定无代理 dispatcher，避免受 HTTPS_PROXY 环境变量影响。
   app.get('/api/image', async (request, reply) => {
     const query = request.query as { url?: string };
     let target = query.url || '';
@@ -614,14 +759,21 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       return { error: '只允许代理豆瓣图片' };
     }
     try {
+      const { fetch, Agent } = await import('undici');
+      // 创建一个不使用代理的 Agent
+      const noProxyAgent = new Agent();
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 12000);
       const upstream = await fetch(target, {
         headers: {
           'User-Agent': config.userAgent,
           Referer: 'https://movie.douban.com/',
           Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
         },
-        signal: AbortSignal.timeout(12000),
+        signal: controller.signal,
+        dispatcher: noProxyAgent,
       });
+      clearTimeout(timeout);
       if (!upstream.ok || !upstream.body) {
         reply.code(upstream.status || 502);
         return { error: '图片加载失败' };
@@ -677,6 +829,13 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
           headers,
           range,
           signal: abortParallel.signal,
+          // 统计从 CDN 实际拉取的字节，前端换算成实时网速。
+          onBytes: (bytes) => addPlayBytes(token, bytes),
+          // 并发数交给 openQuarkRangeStream 自适应（4~8 路，初始 6 路），
+          // 变化时同步给前端展示。
+          onConcurrency: (value) => {
+            playTrafficEntry(token).concurrency = value;
+          },
         });
         if (parallel) {
           reply.code(parallel.status);
@@ -689,6 +848,8 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       }
 
       try {
+        // 走到这里说明是单连接拉流（HLS、小范围请求或并发失败回退）。
+        playTrafficEntry(token).concurrency = 1;
         const upstream = await fetch(target.url, {
           method: request.method === 'HEAD' ? 'HEAD' : 'GET',
           headers,
@@ -736,7 +897,9 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
         request.raw.on('close', () => {
           upstream.body?.cancel().catch(() => {});
         });
-        return reply.send(Readable.fromWeb(upstream.body as never));
+        return reply.send(
+          countPlayBytes(Readable.fromWeb(upstream.body as never), token),
+        );
       } catch (error) {
         reply.code(502);
         return `上游拉流失败：${errorMessage(error)}`;
@@ -750,6 +913,26 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       .header('Access-Control-Allow-Methods', 'GET,HEAD,OPTIONS')
       .header('Access-Control-Allow-Headers', 'Range,Content-Type');
     return reply.send();
+  });
+
+  app.get('/api/play-stats/:token', async (request, reply) => {
+    reply.header('Access-Control-Allow-Origin', '*');
+    reply.header('Cache-Control', 'no-store');
+    const { token } = request.params as { token: string };
+    const entry = playTraffic.get(token);
+    if (!entry) return { bytes: 0, speed: 0, concurrency: 0 };
+    const now = Date.now();
+    // 用两次轮询之间的字节增量计算瞬时速度，单位 bytes/s。
+    const elapsed = Math.max(0.001, (now - entry.lastAt) / 1000);
+    const speed = Math.max(0, (entry.bytes - entry.lastBytes) / elapsed);
+    entry.lastBytes = entry.bytes;
+    entry.lastAt = now;
+    if (playTraffic.size > 200) {
+      for (const [key, value] of playTraffic) {
+        if (now - value.updatedAt > 5 * 60 * 1000) playTraffic.delete(key);
+      }
+    }
+    return { bytes: entry.bytes, speed, concurrency: entry.concurrency };
   });
 
   app.get('/api/collections', async () => ({

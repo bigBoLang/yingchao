@@ -12,27 +12,27 @@ import {
   Terminal,
   Download,
   AlertCircle,
+  Zap,
+  Gauge,
 } from 'lucide-react';
 import type { QuarkFile, Resource } from '../types';
-import { api, absoluteUrl, copyText } from '../api';
+import { api, absoluteUrl, playAbsoluteUrl, copyText } from '../api';
 import { Modal } from './Modal';
 import { useToast } from './Toast';
 import { VideoPlayer } from './VideoPlayer';
 import { formatBytes } from '../lib/format';
 
-function isIOS(): boolean {
-  if (typeof navigator === 'undefined') return false;
-  return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-}
-
-function isMacOS(): boolean {
-  if (typeof navigator === 'undefined') return false;
-  return /Macintosh/.test(navigator.userAgent);
-}
-
-function isWindows(): boolean {
-  if (typeof navigator === 'undefined') return false;
-  return /Windows/.test(navigator.userAgent);
+function detectPlatform() {
+  if (typeof navigator === 'undefined') {
+    return { ios: false, mac: false, win: false, android: false };
+  }
+  const ua = navigator.userAgent;
+  return {
+    ios: /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1),
+    android: /Android/.test(ua),
+    mac: /Macintosh/.test(ua),
+    win: /Windows/.test(ua),
+  };
 }
 
 const PLAYER_DOWNLOADS: Record<string, { name: string; url: string; desc: string }> = {
@@ -42,6 +42,10 @@ const PLAYER_DOWNLOADS: Record<string, { name: string; url: string; desc: string
   mpv: { name: 'MPV', url: 'https://mpv.io/installation/', desc: '极简命令行播放器，需配合脚本' },
   infuse: { name: 'Infuse', url: 'https://firecore.com/infuse', desc: 'iOS/macOS 顶级播放器，云同步元数据' },
   nplayer: { name: 'nPlayer', url: 'https://nplayer.tv/', desc: 'iOS 付费播放器，格式支持极全' },
+  // Android
+  mxplayer: { name: 'MX Player', url: 'https://mxplayer.in/', desc: 'Android 老牌硬解播放器，支持 DTS/AC3' },
+  vlcAndroid: { name: 'VLC for Android', url: 'https://www.videolan.org/vlc/download-android.html', desc: 'Android 版 VLC，开源免费' },
+  kmplayer: { name: 'KMPlayer', url: 'https://kmplayer.com/', desc: 'Android 多格式播放器，支持云播' },
 };
 
 type PlayerKey = keyof typeof PLAYER_DOWNLOADS;
@@ -85,8 +89,22 @@ export function PlayerModal({
   const [copied, setCopied] = useState(false);
   const [playUrl, setPlayUrl] = useState('');
   const [playFormat, setPlayFormat] = useState<'hls' | 'video' | undefined>();
+  const [directUrl, setDirectUrl] = useState('');
+  const [directHeaders, setDirectHeaders] = useState<Record<string, string>>({});
+  const [line, setLine] = useState<'proxy' | 'direct'>('proxy');
+  const [quality, setQuality] = useState<'transcode' | 'original'>('original');
+  const [playMeta, setPlayMeta] = useState<{
+    line?: 'transcode' | 'original';
+    driver?: 'tv' | 'pc';
+    resolution?: string;
+  } | null>(null);
   const [resolving, setResolving] = useState(false);
   const [resolveError, setResolveError] = useState('');
+  const [netSpeed, setNetSpeed] = useState(0);
+  const [netBytes, setNetBytes] = useState(0);
+  const [netConcurrency, setNetConcurrency] = useState(0);
+  const [tvReady, setTvReady] = useState(false);
+  const [configLoaded, setConfigLoaded] = useState(false);
   const [player, setPlayer] = useState({
     iina: true,
     vlc: true,
@@ -95,33 +113,51 @@ export function PlayerModal({
     infuse: true,
     vlcIos: true,
     nplayer: true,
+    mxplayer: true,
+    vlcAndroid: true,
+    kmplayer: true,
     defaultExternal: 'iina',
   });
+  const platform = useMemo(() => detectPlatform(), []);
 
   useEffect(() => {
-    api<{ player: typeof player }>('/api/config')
-      .then((data) => setPlayer((current) => ({ ...current, ...data.player })))
-      .catch(() => undefined);
+    api<{
+      player: typeof player;
+      quarkTv?: { loggedIn: boolean; enabled: boolean; linkMode: 'streaming' | 'download' };
+    }>('/api/config')
+      .then((data) => {
+        setPlayer((current) => ({ ...current, ...data.player }));
+        // 只有 TV 驱动可用时才展示「转码 / 原画」两条线路，否则沿用原有代理/直链。
+        setTvReady(Boolean(data.quarkTv?.enabled));
+        setQuality(data.quarkTv?.linkMode === 'download' ? 'original' : 'transcode');
+        setConfigLoaded(true);
+      })
+      .catch(() => setConfigLoaded(true));
   }, []);
 
   const file = files[selected];
   const shareUrl = resource.url;
   const isMobile = resource.cloudType === 'mobile';
-  const ios = isIOS();
-  const mac = isMacOS();
-  const win = isWindows();
+  const canPickQuality = tvReady && !isMobile && Boolean(file?.fid);
+  const { ios, android, mac, win } = platform;
 
   useEffect(() => {
     if (!file) {
       setPlayUrl('');
       setPlayFormat(undefined);
+      setDirectUrl('');
+      setDirectHeaders({});
+      setPlayMeta(null);
       setResolveError('');
       setResolving(false);
       return;
     }
-    const localUrl = file.proxyUrl ? absoluteUrl(file.proxyUrl) : file.directUrl || '';
+    const localUrl = file.proxyUrl ? playAbsoluteUrl(file.proxyUrl) : file.directUrl || '';
     if (localUrl) {
       setPlayUrl(localUrl);
+      setDirectUrl(file.directUrl || '');
+      setDirectHeaders({});
+      setPlayMeta(null);
       setPlayFormat(
         /\.m3u8(\?|$)/i.test(file.directUrl || file.proxyUrl || '') ? 'hls' : 'video',
       );
@@ -132,28 +168,53 @@ export function PlayerModal({
     if (!file.fid) {
       setPlayUrl('');
       setPlayFormat(undefined);
+      setDirectUrl('');
+      setDirectHeaders({});
+      setPlayMeta(null);
       setResolveError('没有拿到文件 ID，请重新解析资源');
       setResolving(false);
+      return;
+    }
+    // 等 /api/config 返回后再解析，避免默认线路先按 transcode 请求一次。
+    if (!configLoaded) {
+      setResolving(true);
       return;
     }
 
     let cancelled = false;
     setPlayUrl('');
     setPlayFormat(undefined);
+    setPlayMeta(null);
     setResolveError('');
     setResolving(true);
-    api<{ proxyUrl?: string; format?: 'hls' | 'video' }>(`/api/resources/${resource.id}/play`, {
+    api<{
+      proxyUrl?: string;
+      directUrl?: string;
+      directHeaders?: Record<string, string>;
+      format?: 'hls' | 'video';
+      line?: 'transcode' | 'original';
+      driver?: 'tv' | 'pc';
+      resolution?: string;
+    }>(`/api/resources/${resource.id}/play`, {
       method: 'POST',
       body: JSON.stringify({
         fid: file.fid,
         name: file.name,
         size: file.size,
+        line: quality,
       }),
     })
       .then((result) => {
         if (cancelled) return;
         if (!result.proxyUrl) throw new Error('服务端没有返回播放地址');
-        setPlayUrl(absoluteUrl(result.proxyUrl));
+        setPlayUrl(playAbsoluteUrl(result.proxyUrl));
+        setDirectUrl(result.directUrl || '');
+        setDirectHeaders(result.directHeaders || {});
+        setPlayMeta({
+          line: result.line,
+          driver: result.driver,
+          resolution: result.resolution,
+        });
         setPlayFormat(
           result.format || (/\.m3u8(\?|$)/i.test(result.proxyUrl) ? 'hls' : 'video'),
         );
@@ -170,18 +231,65 @@ export function PlayerModal({
     return () => {
       cancelled = true;
     };
-  }, [file?.fid, file?.proxyUrl, file?.directUrl, resource.id]);
+  }, [file?.fid, file?.proxyUrl, file?.directUrl, resource.id, quality, configLoaded]);
 
+  // 从代理播放地址里取 token，用于查询服务端实时流量。
+  const playToken = useMemo(() => {
+    if (!playUrl) return '';
+    try {
+      const match = new URL(playUrl).pathname.match(/^\/api\/play\/(.+)$/);
+      return match ? match[1] : '';
+    } catch {
+      return '';
+    }
+  }, [playUrl]);
+
+  useEffect(() => {
+    // HLS 由多个分片 token 组成，这里只统计单文件的代理播放。
+    if (!playToken || line !== 'proxy' || playFormat === 'hls') {
+      setNetSpeed(0);
+      setNetBytes(0);
+      setNetConcurrency(0);
+      return;
+    }
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const stats = await api<{ bytes: number; speed: number; concurrency?: number }>(
+          `/api/play-stats/${encodeURIComponent(playToken)}`,
+        );
+        if (cancelled) return;
+        setNetSpeed(stats.speed);
+        setNetBytes(stats.bytes);
+        setNetConcurrency(stats.concurrency || 0);
+      } catch {
+        // 统计失败不影响播放
+      }
+    };
+    void tick();
+    const timer = window.setInterval(tick, 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [playToken, line, playFormat]);
+
+  const lineUrl = line === 'direct' && directUrl ? directUrl : playUrl;
   const protocols = useMemo(
     () => ({
-      iina: playUrl ? `iina://weblink?url=${encodeURIComponent(playUrl)}` : '',
-      vlc: playUrl ? `vlc-x-callback://x-callback-url/stream?url=${encodeURIComponent(playUrl)}` : '',
-      potplayer: playUrl ? `potplayer://${playUrl}` : '',
-      infuse: playUrl ? `infuse://x-callback-url/play?url=${encodeURIComponent(playUrl)}` : '',
-      vlcIos: playUrl ? `vlc-x-callback://x-callback-url/stream?url=${encodeURIComponent(playUrl)}` : '',
-      nplayer: playUrl ? playUrl.replace(/^https?:/, 'nplayer-https:').replace(/^http:/, 'nplayer-http:') : '',
+      iina: lineUrl ? `iina://weblink?url=${encodeURIComponent(lineUrl)}` : '',
+      // macOS VLC 用 vlc://，iOS/Android 用 x-callback-url
+      vlc: lineUrl ? (ios || android ? `vlc-x-callback://x-callback-url/stream?url=${encodeURIComponent(lineUrl)}` : `vlc://${lineUrl}`) : '',
+      potplayer: lineUrl ? `potplayer://${lineUrl}` : '',
+      infuse: lineUrl ? `infuse://x-callback-url/play?url=${encodeURIComponent(lineUrl)}` : '',
+      vlcIos: lineUrl ? `vlc-x-callback://x-callback-url/stream?url=${encodeURIComponent(lineUrl)}` : '',
+      nplayer: lineUrl ? lineUrl.replace(/^https?:/, 'nplayer-https:').replace(/^http:/, 'nplayer-http:') : '',
+      // Android players
+      mxplayer: lineUrl ? `intent:${encodeURIComponent(lineUrl)}#Intent;package=com.mxtech.videoplayer.ad;scheme=https;end` : '',
+      vlcAndroid: lineUrl ? `intent:${encodeURIComponent(lineUrl)}#Intent;package=org.videolan.vlc;scheme=https;end` : '',
+      kmplayer: lineUrl ? `intent:${encodeURIComponent(lineUrl)}#Intent;package=com.kmplayer;scheme=https;end` : '',
     }),
-    [playUrl],
+    [lineUrl, ios, android],
   );
 
   const copy = async (value: string, message = '已复制') => {
@@ -201,6 +309,16 @@ export function PlayerModal({
     tryOpenProtocol(protocolUrl, download.url, playerKey);
   }, []);
 
+  const headerFieldValue = Object.entries(directHeaders)
+    .map(([key, value]) => `${key}: ${value}`)
+    .join(',');
+  const mpvCommand = directUrl
+    ? headerFieldValue
+      ? `mpv --http-header-fields="${headerFieldValue}" "${directUrl}"`
+      : `mpv "${directUrl}"`
+    : '';
+  const showDirect = line === 'direct' && Boolean(directUrl);
+
   return (
     <Modal
       title={file?.name || '播放资源'}
@@ -211,7 +329,7 @@ export function PlayerModal({
         <div className="player-footer">
           <span>
             <Server size={14} />
-            播放地址经由本机代理转发，服务关闭后将失效
+            {showDirect ? '直链线路：流量直连网盘 CDN，不经本机代理' : '播放地址经由本机代理转发，服务关闭后将失效'}
           </span>
           {resource.password ? <span className="password-chip">提取码 {resource.password}</span> : null}
         </div>
@@ -219,7 +337,86 @@ export function PlayerModal({
     >
       <div className="player-layout">
         <div className="player-main">
-          {playUrl ? (
+          {canPickQuality || directUrl ? (
+            <div className="player-lines">
+              {canPickQuality ? (
+                <>
+                  <button
+                    type="button"
+                    className={`chip ${line === 'proxy' && quality === 'original' ? 'active' : ''}`}
+                    onClick={() => {
+                      setQuality('original');
+                      setLine('proxy');
+                    }}
+                  >
+                    线路 A · 原画（原文件）
+                  </button>
+                  <button
+                    type="button"
+                    className={`chip ${line === 'proxy' && quality === 'transcode' ? 'active' : ''}`}
+                    onClick={() => {
+                      setQuality('transcode');
+                      setLine('proxy');
+                    }}
+                  >
+                    线路 B · TV 转码（起播快）
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className={`chip ${line === 'proxy' ? 'active' : ''}`}
+                  onClick={() => setLine('proxy')}
+                >
+                  线路 A · 代理（4 路并发）
+                </button>
+              )}
+              {directUrl ? (
+                <button
+                  type="button"
+                  className={`chip ${line === 'direct' ? 'active' : ''}`}
+                  onClick={() => setLine('direct')}
+                >
+                  {canPickQuality ? `直链 · ${quality === 'original' ? '原画' : '转码'}` : '线路 B · 直链（不经服务器）'}
+                </button>
+              ) : null}
+              {canPickQuality && playMeta?.line ? (
+                <span className="line-hint" title={directUrl}>
+                  实际线路：
+                  {playMeta.line === 'original'
+                    ? '原画 · 原文件'
+                    : `TV 转码${playMeta.resolution ? ` · ${playMeta.resolution.toUpperCase()}` : ''}`}
+                  {playMeta.driver === 'pc' ? '（PC 直链）' : '（TV 直链）'}
+                </span>
+              ) : null}
+              {line === 'proxy' && playToken && playFormat !== 'hls' ? (
+                <span
+                  className="line-hint"
+                  title={netBytes ? `本次已接收 ${formatBytes(netBytes)}` : undefined}
+                >
+                  <Gauge size={12} />
+                  网速{' '}
+                  {netSpeed > 0
+                    ? `${(netSpeed / 1048576).toFixed(1)} MB/s · ${Math.round((netSpeed * 8) / 1e6)} Mbps`
+                    : netBytes > 0
+                      ? '0 MB/s'
+                      : '统计中…'}
+                  {netConcurrency > 0 ? ` · ${netConcurrency} 路` : ''}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+
+          {showDirect ? (
+            <div className="player-placeholder">
+              <Zap size={34} />
+              <p>直链线路已就绪</p>
+              <span>
+                流量直接走网盘 CDN，不经过影巢服务器，但只有一条连接、没有并发加速；
+                浏览器和 VLC / IINA 无法携带防盗链请求头，请用下方「MPV 命令」在终端播放。
+              </span>
+            </div>
+          ) : playUrl ? (
             <VideoPlayer key={playUrl} src={playUrl} format={playFormat} />
           ) : (
             <div className="player-placeholder">
@@ -244,13 +441,29 @@ export function PlayerModal({
           )}
 
           <div className="player-actions">
-            {playUrl ? (
+            {showDirect ? (
               <>
-                <button type="button" className="btn btn-ghost btn-sm" onClick={() => copy(playUrl, '播放地址已复制')}>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => copy(directUrl, '直链已复制')}>
                   {copied ? <Check size={15} /> : <Copy size={15} />}
                   复制直链
                 </button>
-                {!ios ? (
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => copy(mpvCommand, '已复制 MPV 命令')}>
+                  <Terminal size={15} />
+                  MPV 命令
+                </button>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => copy(headerFieldValue, '已复制请求头')}>
+                  <Server size={15} />
+                  复制请求头
+                </button>
+              </>
+            ) : null}
+            {lineUrl && !showDirect ? (
+              <>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => copy(lineUrl, '播放地址已复制')}>
+                  {copied ? <Check size={15} /> : <Copy size={15} />}
+                  复制直链
+                </button>
+                {!ios && !android ? (
                   <>
                     {/* macOS 首选 IINA */}
                     {mac && player.iina ? (
@@ -315,10 +528,47 @@ export function PlayerModal({
                       <button
                         type="button"
                         className="btn btn-ghost btn-sm"
-                        onClick={() => copy(`mpv "${playUrl}"`, '已复制 MPV 命令')}
+                        onClick={() => copy(showDirect ? mpvCommand : `mpv "${playUrl}"`, '已复制 MPV 命令')}
                       >
                         <Terminal size={15} />
                         MPV 命令
+                      </button>
+                    ) : null}
+                  </>
+                ) : android ? (
+                  <>
+                    {/* Android 首选 MX Player / VLC */}
+                    {player.mxplayer ? (
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => handlePlayerClick('mxplayer', protocols.mxplayer)}
+                        title="Android 推荐：MX Player"
+                      >
+                        <Smartphone size={15} />
+                        MX Player
+                      </button>
+                    ) : null}
+                    {player.vlcAndroid ? (
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => handlePlayerClick('vlcAndroid', protocols.vlcAndroid)}
+                        title="Android：VLC for Android"
+                      >
+                        <Smartphone size={15} />
+                        VLC
+                      </button>
+                    ) : null}
+                    {player.kmplayer ? (
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => handlePlayerClick('kmplayer', protocols.kmplayer)}
+                        title="Android：KMPlayer"
+                      >
+                        <Smartphone size={15} />
+                        KMPlayer
                       </button>
                     ) : null}
                   </>
@@ -368,7 +618,11 @@ export function PlayerModal({
             {isMobile
               ? '移动云盘分享会返回 HLS 播放列表，影巢会把播放列表和分片统一代理到本机，浏览器、IINA、VLC 都可以直接播放。'
               : '夸克分享首次播放会按需转存到你的「影巢播放缓存」目录，之后再次播放会直接复用。'}
-            {ios ? ' iOS 建议用 Infuse / VLC / nPlayer 播放 MKV/H.265。' : ' 浏览器无法播放 MKV / H.265 时，请改用 IINA 或 VLC。'}
+            {ios
+              ? ' iOS 首次点击会弹系统「打开 VLC/Infuse？」询问，允许后再点一次即可播放 MKV/H.265。'
+              : android
+                ? ' Android 首次点击会弹系统「打开 MX Player/VLC？」询问，允许后再点一次即可播放 MKV/H.265。'
+                : ' 浏览器无法播放 MKV / H.265 时，请改用 IINA 或 VLC。'}
             外部播放器需要先在「设置 → 播放器」中启用。
           </p>
         </div>

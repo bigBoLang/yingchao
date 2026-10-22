@@ -1,4 +1,5 @@
 import Fastify from 'fastify';
+import cookie from '@fastify/cookie';
 import { config } from './config.js';
 import { bootstrapSettings, registerRoutes, registerStatic } from './routes.js';
 import { startScheduler, stopScheduler } from './scheduler.js';
@@ -8,6 +9,12 @@ const app = Fastify({
   bodyLimit: 2 * 1024 * 1024,
   routerOptions: { maxParamLength: 4096 },
   trustProxy: true,
+});
+
+await app.register(cookie, {
+  secret: config.appSecret || 'change-me-in-production',
+  hook: 'onRequest',
+  parseOptions: {},
 });
 
 bootstrapSettings();

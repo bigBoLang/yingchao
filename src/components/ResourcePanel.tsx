@@ -4,6 +4,7 @@ import {
   Cloud,
   Database,
   Loader2,
+  Play,
   RefreshCw,
   Search,
   Settings2,
@@ -22,7 +23,6 @@ import type {
 import { api } from '../api';
 import { useToast } from './Toast';
 import { ResourceCard } from './ResourceCard';
-import { PlayerModal } from './PlayerModal';
 import { EmptyState, LoadingBlock } from './EmptyState';
 import { CLOUD_LABELS, relativeTime } from '../lib/format';
 
@@ -44,18 +44,41 @@ const STATUS_RANK: Record<Resource['status'], number> = {
   invalid: 3,
 };
 
+// 资源标题里通常带着画质和字幕信息：把「高画质 + 双语/中文字幕」排到前面。
+function qualityScore(text: string): number {
+  if (/4k|2160p|uhd|remux|原盘/i.test(text)) return 3;
+  if (/1080p|bluray|blu-ray|蓝光|bdrip/i.test(text)) return 2;
+  if (/720p/i.test(text)) return 1;
+  return 0;
+}
+
+function subtitleScore(text: string): number {
+  if (/双语|中英|简英|简繁英|中日|多字幕|多语字幕/i.test(text)) return 2;
+  if (/中字|中文字幕|简中|简繁|字幕|内嵌|内置|外挂|硬字/i.test(text)) return 1;
+  return 0;
+}
+
+function resourceRank(resource: Resource): number {
+  const text = `${resource.title} ${resource.note}`;
+  return qualityScore(text) * 10 + subtitleScore(text);
+}
+
 export function ResourcePanel({
   subject,
   initialResources,
   initialSearchState,
   initialChannels,
   shouldSearch,
+  onOpenPlayer,
+  bindPlayFirst,
 }: {
   subject: Subject;
   initialResources: Resource[];
   initialSearchState: SubjectBundle['searchState'];
   initialChannels: SubjectBundle['channels'];
   shouldSearch: boolean;
+  onOpenPlayer: (resource: Resource, files: QuarkFile[]) => void;
+  bindPlayFirst: (fn: () => void) => void;
 }) {
   const toast = useToast();
   const [resources, setResources] = useState<Resource[]>(initialResources);
@@ -64,9 +87,29 @@ export function ResourcePanel({
   const [error, setError] = useState('');
   const [channelResults, setChannelResults] = useState<ChannelSearchResult[]>([]);
   const [lastSearchedAt, setLastSearchedAt] = useState(initialSearchState.lastSearchedAt);
-  const [player, setPlayer] = useState<{ resource: Resource; files: QuarkFile[] } | null>(null);
   const [expanded, setExpanded] = useState(false);
   const autoStarted = useRef(false);
+
+  const playFirstResource = async () => {
+    const first = sorted[0];
+    if (!first) return;
+    toast.push('正在解析最佳资源…', 'info');
+    try {
+      const result = await api<{ files: QuarkFile[]; error?: string; message?: string }>(
+        `/api/resources/${first.id}/resolve`,
+        { method: 'POST' }
+      );
+      if (result.error) throw new Error(result.error);
+      if (!result.files?.length) {
+        toast.push(result.message || '没有解析到视频文件', 'info');
+        return;
+      }
+      onOpenPlayer(first, result.files);
+      toast.push('已打开播放器', 'success');
+    } catch (error) {
+      toast.push(error instanceof Error ? error.message : '解析失败', 'error');
+    }
+  };
 
   const runSearch = async (force = true, cloudType: CloudType | 'all' = cloud) => {
     setLoading(true);
@@ -104,14 +147,17 @@ export function ResourcePanel({
   const filtered = useMemo(
     () => {
       const base = cloud === 'all' ? resources : resources.filter((resource) => resource.cloudType === cloud);
-      // 隐藏失效链接
-      return base.filter((resource) => resource.status !== 'invalid');
+      // 只保留经过检测确认有效的链接，失效和未检测的一律不展示。
+      return base.filter((resource) => resource.status === 'valid');
     },
     [resources, cloud],
   );
 
   const sorted = useMemo(() => {
     return [...filtered].sort((a, b) => {
+      // 画质和字幕优先：4K/蓝光原盘、带双语或中文字幕的资源排前面。
+      const rankDiff = resourceRank(b) - resourceRank(a);
+      if (rankDiff !== 0) return rankDiff;
       const statusDiff = STATUS_RANK[a.status] - STATUS_RANK[b.status];
       if (statusDiff !== 0) return statusDiff;
       if (b.matchScore !== a.matchScore) return b.matchScore - a.matchScore;
@@ -119,7 +165,12 @@ export function ResourcePanel({
     });
   }, [filtered]);
 
-  const visibleResources = expanded ? sorted : sorted.slice(0, 3);
+  const visibleResources = expanded ? sorted : sorted.slice(0, 5);
+
+  // 顶部「播放最佳资源」按钮复用这里的同一套选择与解析逻辑
+  useEffect(() => {
+    bindPlayFirst(playFirstResource);
+  });
 
   useEffect(() => {
     setExpanded(false);
@@ -212,10 +263,10 @@ export function ResourcePanel({
       {!loading && filtered.length === 0 ? (
         <EmptyState
           icon={<Search size={26} />}
-          title={resources.length ? `暂无${CLOUD_LABELS[cloud] || ''}资源` : '还没有缓存资源'}
+          title={resources.length ? `暂无有效${CLOUD_LABELS[cloud] || ''}资源` : '还没有缓存资源'}
           description={
             resources.length
-              ? '切换网盘类型，或针对当前网盘重新检索。'
+              ? '缓存中的链接尚未通过有效性检测，后台会自动复查；也可以重新检索。'
               : activeChannels.length
                 ? `已启用 ${activeChannels.length} 个渠道。点击下方按钮开始检索，结果会写入本地缓存。`
                 : '还没有启用的检索渠道，请先到设置中添加 PanSou 或其他渠道。'
@@ -240,7 +291,7 @@ export function ResourcePanel({
           <ResourceCard
             key={resource.id}
             resource={resource}
-            onResolved={(target, files) => setPlayer({ resource: target, files })}
+            onResolved={(target, files) => onOpenPlayer(target, files)}
             onChecked={(updated) =>
               setResources((current) =>
                 current.map((item) => (item.id === updated.id ? { ...item, ...updated } : item)),
@@ -250,12 +301,12 @@ export function ResourcePanel({
         ))}
       </div>
 
-      {sorted.length > 3 ? (
+      {sorted.length > 5 ? (
         <div className="resource-more">
           <span>
             {expanded
               ? `已展开全部 ${sorted.length} 条`
-              : `按可用性与匹配度优先展示前 3 条，另有 ${sorted.length - 3} 条`}
+              : `按画质、字幕与匹配度优先展示前 5 条，另有 ${sorted.length - 5} 条`}
           </span>
           <button
             type="button"
@@ -271,14 +322,10 @@ export function ResourcePanel({
         <div className="resource-footnote">
           <span>
             <Database size={14} />
-            共 {filtered.length} 条可用缓存（已隐藏失效），当前显示 {visibleResources.length} 条
+            共 {filtered.length} 条有效资源，当前显示 {visibleResources.length} 条
           </span>
-          <span>后台巡检会定期复查失效链接。</span>
+          <span>已过滤失效与未检测链接，后台巡检会定期复查。</span>
         </div>
-      ) : null}
-
-      {player ? (
-        <PlayerModal resource={player.resource} files={player.files} onClose={() => setPlayer(null)} />
       ) : null}
     </section>
   );

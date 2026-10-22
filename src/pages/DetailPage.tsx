@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -8,16 +8,18 @@ import {
   ExternalLink,
   Film,
   HardDrive,
+  Play,
   Star,
   Tv,
   Users,
 } from 'lucide-react';
-import type { MediaType, Subject, SubjectBundle } from '../types';
+import type { MediaType, QuarkFile, Resource, Subject, SubjectBundle } from '../types';
 import { api } from '../api';
 import { useApi } from '../hooks/useApi';
 import { PosterImage } from '../components/PosterImage';
 import { Rating } from '../components/Rating';
 import { ResourcePanel } from '../components/ResourcePanel';
+import { PlayerModal } from '../components/PlayerModal';
 import { EmptyState } from '../components/EmptyState';
 import { MediaCard } from '../components/MediaCard';
 import { formatCount, typeLabel } from '../lib/format';
@@ -27,6 +29,8 @@ export function DetailPage() {
   const [params] = useSearchParams();
   const type = (params.get('type') || '') as MediaType | '';
   const [expanded, setExpanded] = useState(false);
+  const [player, setPlayer] = useState<{ resource: Resource; files: QuarkFile[] } | null>(null);
+  const playBestRef = useRef<() => void>(() => {});
 
   const { data, loading, error, reload } = useApi<SubjectBundle>(
     () => api(`/api/subjects/${id}${type ? `?type=${type}` : ''}`),
@@ -184,6 +188,16 @@ export function DetailPage() {
                 <Users size={16} />
                 豆瓣讨论
               </a>
+              {data.resources.length > 0 && (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => playBestRef.current()}
+                >
+                  <Play size={14} />
+                  播放最佳资源
+                </button>
+              )}
               <span className="detail-views">
                 <Film size={14} />
                 {formatCount(subject.views || 0)} 次浏览
@@ -199,6 +213,10 @@ export function DetailPage() {
           initialSearchState={data.searchState}
           initialChannels={data.channels}
           shouldSearch={data.shouldSearch}
+          onOpenPlayer={(resource, files) => setPlayer({ resource, files })}
+          bindPlayFirst={(fn) => {
+            playBestRef.current = fn;
+          }}
         />
 
         {relatedItems.length ? (
@@ -218,6 +236,10 @@ export function DetailPage() {
           </section>
         ) : null}
       </div>
+
+      {player ? (
+        <PlayerModal resource={player.resource} files={player.files} onClose={() => setPlayer(null)} />
+      ) : null}
     </div>
   );
 }

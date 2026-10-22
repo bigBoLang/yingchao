@@ -10,12 +10,12 @@ export function VideoPlayer({
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [error, setError] = useState('');
+  const isHls = format === 'hls' || /\.m3u8(\?|$)/i.test(src);
 
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !src) return;
     setError('');
-    const isHls = format === 'hls' || /\.m3u8(\?|$)/i.test(src);
 
     if (!isHls) {
       video.src = src;
@@ -79,9 +79,15 @@ export function VideoPlayer({
       ref={videoRef}
       className="video-player"
       controls
-      autoPlay
       playsInline
       preload="metadata"
+      onError={() =>
+        setError(
+          isHls
+            ? '视频流加载失败，链接可能已过期，关闭后重新解析即可。'
+            : '浏览器无法播放这个视频（原画常见 MKV / H.265），请用下方的 IINA / VLC 打开。',
+        )
+      }
     />
   );
 }

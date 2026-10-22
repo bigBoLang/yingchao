@@ -1,6 +1,8 @@
 import crypto from 'node:crypto';
 import { config } from './config.js';
+import { quarkFetch as fetch } from './direct-fetch.js';
 import { getAppSecret, getSetting } from './db.js';
+import { isQuarkTvEnabled, resolveQuarkTvPlayUrl } from './quark-tv.js';
 import type { QuarkFile, QuarkResolveResult, Resource } from './types.js';
 
 const QUARK_ORIGIN = 'https://drive-pc.quark.cn';
@@ -418,13 +420,57 @@ async function findShareFileToken(
   return '';
 }
 
+export type QuarkPlayLine = 'transcode' | 'original';
+
+// 播放线路解析要经过分享 token、转存目录、TV token 等多个请求，切换线路或重复播放会明显等待。
+// 这里缓存「文件已转存到哪个 fid」和「各线路直链」，让原画与转码之间切换基本即时完成。
+const savedFileCache = new Map<
+  string,
+  { fid: string; reused: boolean; expires: number }
+>();
+const playUrlCache = new Map<
+  string,
+  {
+    url: string;
+    driver: 'tv' | 'pc';
+    line: QuarkPlayLine;
+    resolution?: string;
+    expires: number;
+  }
+>();
+const SAVED_FILE_TTL_MS = 10 * 60 * 1000;
+const PLAY_URL_TTL_MS = 5 * 60 * 1000;
+
+function pruneCache<T extends { expires: number }>(cache: Map<string, T>, limit: number) {
+  const now = Date.now();
+  for (const [key, value] of cache) {
+    if (value.expires <= now) cache.delete(key);
+  }
+  if (cache.size > limit) {
+    let remove = cache.size - limit;
+    for (const key of cache.keys()) {
+      cache.delete(key);
+      if (--remove <= 0) break;
+    }
+  }
+}
+
 export async function resolveQuarkFileDownload(options: {
   shareUrl: string;
   password?: string;
   fid: string;
   name?: string;
   size?: number;
-}): Promise<{ proxyUrl: string; savedFid: string; reused: boolean }> {
+  line?: QuarkPlayLine;
+}): Promise<{
+  proxyUrl: string;
+  directUrl: string;
+  savedFid: string;
+  reused: boolean;
+  driver: 'tv' | 'pc';
+  line: QuarkPlayLine;
+  resolution?: string;
+}> {
   const ref = parseQuarkShare(options.shareUrl, options.password);
   if (!ref) throw new Error('不是有效的夸克分享链接');
   if (!options.fid) throw new Error('缺少文件 ID');
@@ -432,37 +478,99 @@ export async function resolveQuarkFileDownload(options: {
   if (!cookie) {
     throw new Error('解析播放需要先配置夸克 Cookie');
   }
-  const token = await getQuarkShareToken(ref.shareId, ref.password);
-  if (!token.ok || !token.stoken) throw new Error(token.message);
+  // Cookie 变了通常意味着换了账号，缓存键要区分开。
+  const accountTag = crypto.createHash('sha1').update(cookie).digest('hex').slice(0, 10);
+  const savedKey = `${ref.shareId}:${options.fid}:${accountTag}`;
+  const cachedSaved = savedFileCache.get(savedKey);
+  let saved = cachedSaved && cachedSaved.expires > Date.now() ? cachedSaved : null;
+  if (!saved) {
+    const token = await getQuarkShareToken(ref.shareId, ref.password);
+    if (!token.ok || !token.stoken) throw new Error(token.message);
 
-  // share_fid_token 是一次性凭证：每次转存前都要用当前 stoken 重新获取，
-  // 不能复用解析列表时拿到的旧 token，否则会报“转存文件token校验异常”。
-  const shareFidToken = await findShareFileToken(
-    ref.shareId,
-    token.stoken,
-    options.fid,
-    cookie,
-  );
-  if (!shareFidToken) throw new Error('没有找到文件的分享凭证，请重新解析');
+    // share_fid_token 是一次性凭证：每次转存前都要用当前 stoken 重新获取，
+    // 不能复用解析列表时拿到的旧 token，否则会报“转存文件token校验异常”。
+    const shareFidToken = await findShareFileToken(
+      ref.shareId,
+      token.stoken,
+      options.fid,
+      cookie,
+    );
+    if (!shareFidToken) throw new Error('没有找到文件的分享凭证，请重新解析');
 
-  const folderFid = await ensureSaveFolder(cookie);
-  const saved = await saveShareFile(
-    ref.shareId,
-    token.stoken,
-    {
-      fid: options.fid,
-      name: options.name || options.fid,
-      size: Number(options.size || 0),
-      shareFidToken,
-    },
-    folderFid,
-    cookie,
-  );
-  const directUrl = await getFileDownloadUrl(saved.fid, cookie);
+    const folderFid = await ensureSaveFolder(cookie);
+    const result = await saveShareFile(
+      ref.shareId,
+      token.stoken,
+      {
+        fid: options.fid,
+        name: options.name || options.fid,
+        size: Number(options.size || 0),
+        shareFidToken,
+      },
+      folderFid,
+      cookie,
+    );
+    saved = {
+      fid: result.fid,
+      reused: result.reused,
+      expires: Date.now() + SAVED_FILE_TTL_MS,
+    };
+    savedFileCache.set(savedKey, saved);
+    pruneCache(savedFileCache, 500);
+  }
+  // 线路由播放端按需选择：
+  // - transcode：TV 视频 CDN 的转码流，起播和拖动最快；
+  // - original：TV 原文件直链，画质无损。
+  // TV 未启用或接口异常时统一回退 PC 原文件直链。
+  const line: QuarkPlayLine = options.line === 'original' ? 'original' : 'transcode';
+  const playKey = `${saved.fid}:${line}`;
+  const cachedPlay = playUrlCache.get(playKey);
+  if (cachedPlay && cachedPlay.expires > Date.now()) {
+    return {
+      proxyUrl: signPlayUrl(cachedPlay.url, 'https://pan.quark.cn/'),
+      directUrl: cachedPlay.url,
+      savedFid: saved.fid,
+      reused: saved.reused,
+      driver: cachedPlay.driver,
+      line,
+      ...(cachedPlay.resolution ? { resolution: cachedPlay.resolution } : {}),
+    };
+  }
+  let directUrl = '';
+  let driver: 'tv' | 'pc' = 'tv';
+  let resolution = '';
+  if (isQuarkTvEnabled()) {
+    try {
+      const tv = await resolveQuarkTvPlayUrl(
+        saved.fid,
+        line === 'original' ? 'download' : 'streaming',
+      );
+      directUrl = tv.url;
+      resolution = tv.resolution || '';
+    } catch {
+      directUrl = '';
+    }
+  }
+  if (!directUrl) {
+    directUrl = await getFileDownloadUrl(saved.fid, cookie);
+    driver = 'pc';
+  }
+  playUrlCache.set(playKey, {
+    url: directUrl,
+    driver,
+    line,
+    ...(resolution ? { resolution } : {}),
+    expires: Date.now() + PLAY_URL_TTL_MS,
+  });
+  pruneCache(playUrlCache, 500);
   return {
     proxyUrl: signPlayUrl(directUrl, 'https://pan.quark.cn/'),
+    directUrl,
     savedFid: saved.fid,
     reused: saved.reused,
+    driver,
+    line,
+    ...(resolution ? { resolution } : {}),
   };
 }
 

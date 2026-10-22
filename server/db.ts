@@ -133,6 +133,16 @@ CREATE TABLE IF NOT EXISTS jobs (
   finished_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_name ON jobs(name, started_at DESC);
+
+CREATE TABLE IF NOT EXISTS users (
+  id TEXT PRIMARY KEY,
+  username TEXT UNIQUE NOT NULL,
+  password_hash TEXT NOT NULL,
+  role TEXT DEFAULT 'admin',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 `);
 
 export const now = () => Math.floor(Date.now() / 1000);
@@ -843,4 +853,66 @@ export function getRuntimeSettings(): {
   // 环境变量是硬开关：显式关闭时不允许被数据库里的旧设置覆盖。
   if (!config.schedulerEnabled) merged.schedulerEnabled = false;
   return merged;
+}
+
+export interface User {
+  id: string;
+  username: string;
+  passwordHash: string;
+  role: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+function hashPassword(password: string): string {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha256').toString('hex');
+  return `${salt}:${hash}`;
+}
+
+function verifyPassword(password: string, stored: string): boolean {
+  const [salt, hash] = stored.split(':');
+  if (!salt || !hash) return false;
+  const computed = crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha256').toString('hex');
+  return crypto.timingSafeEqual(Buffer.from(hash), Buffer.from(computed));
+}
+
+export function createUser(username: string, password: string): User | null {
+  const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
+  if (existing) return null;
+  const now = Math.floor(Date.now() / 1000);
+  const id = crypto.randomBytes(16).toString('hex');
+  const passwordHash = hashPassword(password);
+  db.prepare('INSERT INTO users (id, username, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(id, username, passwordHash, 'admin', now, now);
+  return { id, username, passwordHash, role: 'admin', createdAt: now, updatedAt: now };
+}
+
+export function getUserByUsername(username: string): User | null {
+  const row = db.prepare('SELECT id, username, password_hash as passwordHash, role, created_at as createdAt, updated_at as updatedAt FROM users WHERE username = ?').get(username) as User | undefined;
+  return row || null;
+}
+
+export function verifyUser(username: string, password: string): User | null {
+  const user = getUserByUsername(username);
+  if (!user) return null;
+  if (!verifyPassword(password, user.passwordHash)) return null;
+  return user;
+}
+
+export function getUserById(id: string): User | null {
+  const row = db.prepare('SELECT id, username, password_hash as passwordHash, role, created_at as createdAt, updated_at as updatedAt FROM users WHERE id = ?').get(id) as User | undefined;
+  return row || null;
+}
+
+export function updateUserPassword(userId: string, newPassword: string): boolean {
+  const passwordHash = hashPassword(newPassword);
+  const now = Math.floor(Date.now() / 1000);
+  const result = db.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?').run(passwordHash, now, userId);
+  return result.changes > 0;
+}
+
+export function countUsers(): number {
+  const row = db.prepare('SELECT COUNT(*) as cnt FROM users').get() as { cnt: number };
+  return row.cnt;
 }

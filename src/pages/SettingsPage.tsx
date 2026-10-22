@@ -12,6 +12,7 @@ import {
   Pencil,
   Play,
   Plus,
+  QrCode,
   RefreshCw,
   Save,
   Server,
@@ -54,6 +55,8 @@ export function SettingsPage() {
   const [runningJob, setRunningJob] = useState<string | null>(null);
   const [cookieInput, setCookieInput] = useState('');
   const [savingCookie, setSavingCookie] = useState(false);
+  const [tvLogin, setTvLogin] = useState<{ id: string; qrData: string } | null>(null);
+  const [tvBusy, setTvBusy] = useState(false);
   const [runtime, setRuntime] = useState<RuntimeSettings | null>(null);
   const [player, setPlayer] = useState<SettingsResponse['player'] | null>(null);
   const [savingSettings, setSavingSettings] = useState(false);
@@ -69,6 +72,28 @@ export function SettingsPage() {
     if (settings.data?.runtime) setRuntime(settings.data.runtime);
     if (settings.data?.player) setPlayer(settings.data.player);
   }, [settings.data]);
+
+  useEffect(() => {
+    if (!tvLogin) return;
+    const timer = window.setInterval(async () => {
+      try {
+        const result = await api<{ status: string; message: string }>(
+          `/api/quark-tv/login/${tvLogin.id}`,
+        );
+        if (result.status === 'ok') {
+          setTvLogin(null);
+          toast.push('夸克 TV 登录成功', 'success');
+          settings.reload();
+        } else if (result.status === 'expired') {
+          setTvLogin(null);
+          toast.push(result.message, 'error');
+        }
+      } catch {
+        // 网络抖动时保留二维码，下一轮继续轮询
+      }
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [tvLogin]);
 
   const reloadAll = () => {
     overview.reload();
@@ -167,6 +192,46 @@ export function SettingsPage() {
       toast.push(error instanceof Error ? error.message : '保存失败', 'error');
     } finally {
       setSavingCookie(false);
+    }
+  };
+
+  const startTvLogin = async () => {
+    setTvBusy(true);
+    try {
+      const data = await api<{ id: string; qrData: string }>('/api/quark-tv/login', {
+        method: 'POST',
+      });
+      setTvLogin(data);
+    } catch (error) {
+      toast.push(error instanceof Error ? error.message : '二维码获取失败', 'error');
+    } finally {
+      setTvBusy(false);
+    }
+  };
+
+  const logoutTv = async () => {
+    setTvBusy(true);
+    try {
+      await api('/api/quark-tv/login', { method: 'DELETE' });
+      toast.push('已退出夸克 TV 登录', 'success');
+      settings.reload();
+    } catch (error) {
+      toast.push(error instanceof Error ? error.message : '退出失败', 'error');
+    } finally {
+      setTvBusy(false);
+    }
+  };
+
+  const updateTvPrefs = async (patch: {
+    quarkTvEnabled?: boolean;
+    quarkTvLinkMode?: 'streaming' | 'download';
+    quarkNetMode?: 'auto' | 'proxy' | 'direct';
+  }) => {
+    try {
+      await api('/api/settings', { method: 'PUT', body: JSON.stringify(patch) });
+      settings.reload();
+    } catch (error) {
+      toast.push(error instanceof Error ? error.message : '保存失败', 'error');
     }
   };
 
@@ -512,6 +577,111 @@ export function SettingsPage() {
             </ol>
             <p className="form-note">
               Cookie 仅保存在本机 SQLite，不会上传。失效后解析会提示更新。
+            </p>
+          </div>
+
+          <div className="settings-card">
+            <div className="settings-card-head">
+              <div>
+                <h3>夸克 TV 驱动</h3>
+                <p>
+                  扫码登录夸克 TV 后，播放弹窗会提供「TV 转码」和「原画」两条线路：
+                  转码起播更快，原画走原文件直链，画质无损。
+                </p>
+              </div>
+              <span
+                className={`status-pill ${settings.data?.quarkTv.loggedIn ? 'ok' : 'warn'}`}
+              >
+                {settings.data?.quarkTv.loggedIn ? '已登录' : '未登录'}
+              </span>
+            </div>
+
+            {tvLogin ? (
+              <div className="tv-login">
+                <img src={tvLogin.qrData} alt="夸克 TV 登录二维码" />
+                <div>
+                  <strong>用夸克 App 扫码确认</strong>
+                  <p>扫码后本页会自动更新登录状态，二维码约 5 分钟内有效。</p>
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    onClick={() => setTvLogin(null)}
+                  >
+                    取消
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="cookie-row">
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={startTvLogin}
+                  disabled={tvBusy}
+                >
+                  {tvBusy ? <Loader2 size={15} className="spin" /> : <QrCode size={15} />}
+                  {settings.data?.quarkTv.loggedIn ? '重新扫码' : '扫码登录'}
+                </button>
+                {settings.data?.quarkTv.loggedIn ? (
+                  <button
+                    type="button"
+                    className="btn btn-danger btn-sm"
+                    onClick={logoutTv}
+                    disabled={tvBusy}
+                  >
+                    退出登录
+                  </button>
+                ) : null}
+              </div>
+            )}
+
+            <label className="switch-label">
+              <span>启用 TV 驱动</span>
+              <button
+                type="button"
+                className={`switch ${settings.data?.quarkTv.enabled ? 'on' : ''}`}
+                onClick={() =>
+                  updateTvPrefs({ quarkTvEnabled: !settings.data?.quarkTv.enabled })
+                }
+                aria-pressed={settings.data?.quarkTv.enabled}
+              >
+                <span />
+              </button>
+            </label>
+
+            <label className="form-inline">
+              <span>默认线路</span>
+              <select
+                value={settings.data?.quarkTv.linkMode || 'streaming'}
+                onChange={(event) =>
+                  updateTvPrefs({
+                    quarkTvLinkMode: event.target.value as 'streaming' | 'download',
+                  })
+                }
+              >
+                <option value="download">原画（原文件直链）</option>
+                <option value="streaming">TV 转码（起播快）</option>
+              </select>
+            </label>
+
+            <label className="form-inline">
+              <span>网络线路</span>
+              <select
+                value={settings.data?.quarkNetMode || 'auto'}
+                onChange={(event) =>
+                  updateTvPrefs({
+                    quarkNetMode: event.target.value as 'auto' | 'proxy' | 'direct',
+                  })
+                }
+              >
+                <option value="auto">自动（直连优先，失败走代理）</option>
+                <option value="proxy">代理优先（失败走直连）</option>
+                <option value="direct">仅直连</option>
+              </select>
+            </label>
+
+            <p className="form-note">
+              播放时仍可在播放弹窗里随时切换线路。TV token 仅保存在本机 SQLite，约 7 天有效；过期后重新扫码即可。
             </p>
           </div>
 

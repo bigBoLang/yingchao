@@ -32,6 +32,22 @@ export function absoluteUrl(path: string): string {
   return new URL(path, window.location.origin).href;
 }
 
+export function getPlayBaseUrl(): string {
+  // 由后端 /api/config 返回的 playBaseUrl 决定
+  return (window as any).__PLAY_BASE_URL__ || window.location.origin;
+}
+
+export function setPlayBaseUrl(url: string): void {
+  (window as any).__PLAY_BASE_URL__ = url;
+}
+
+export function playAbsoluteUrl(path: string): string {
+  if (!path) return '';
+  if (/^https?:\/\//i.test(path)) return path;
+  const base = getPlayBaseUrl();
+  return new URL(path, base).href;
+}
+
 export function copyText(text: string): Promise<void> {
   if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
   const textarea = document.createElement('textarea');
