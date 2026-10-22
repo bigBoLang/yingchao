@@ -52,7 +52,7 @@ cloudflared tunnel --url http://localhost:8787
 
 | 首页 | 详情页资源列表 |
 |------|----------------|
-| ![home](docs/screenshots/home.png) | ![detail](docs/screenshots/detail-resources.png) |
+| ![home](docs/screenshots/home.png) | ![detail](docs/screenshots/detail-resources.jpg) |
 
 | 播放弹窗（外部播放器） | 设置-播放器 |
 |------------------------|-------------|
