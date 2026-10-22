@@ -102,7 +102,11 @@ export function ResourcePanel({
   }, [shouldSearch]);
 
   const filtered = useMemo(
-    () => (cloud === 'all' ? resources : resources.filter((resource) => resource.cloudType === cloud)),
+    () => {
+      const base = cloud === 'all' ? resources : resources.filter((resource) => resource.cloudType === cloud);
+      // 隐藏失效链接
+      return base.filter((resource) => resource.status !== 'invalid');
+    },
     [resources, cloud],
   );
 
@@ -267,9 +271,9 @@ export function ResourcePanel({
         <div className="resource-footnote">
           <span>
             <Database size={14} />
-            共 {resources.length} 条缓存，当前显示 {visibleResources.length} 条
+            共 {filtered.length} 条可用缓存（已隐藏失效），当前显示 {visibleResources.length} 条
           </span>
-          <span>失效链接会被隐藏，后台巡检会定期复查。</span>
+          <span>后台巡检会定期复查失效链接。</span>
         </div>
       ) : null}
 
