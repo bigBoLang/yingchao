@@ -1,0 +1,13 @@
+services:
+  yingchao:
+    image: ghcr.io/bigbolang/yingchao:latest
+    container_name: yingchao
+    ports:
+      - "8787:8787"
+    env_file:
+      - .env
+    environment:
+      HOST: 0.0.0.0
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped

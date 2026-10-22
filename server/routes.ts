@@ -199,7 +199,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/health', async () => ({
     ok: true,
     name: '影巢',
-    version: '0.1.0',
+    version: config.version,
     time: now(),
   }));
 
@@ -723,7 +723,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
 
     return {
       name: '影巢',
-      version: '0.1.0',
+      version: config.version,
       hasQuarkCookie: Boolean(getQuarkCookie()),
       enabledChannels: listChannels(true).length,
       player: getSetting('player_prefs', PLAYER_DEFAULTS),

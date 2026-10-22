@@ -20,6 +20,11 @@ const dataDir = process.env.DATA_DIR
 
 fs.mkdirSync(dataDir, { recursive: true });
 
+// 版本号统一从 package.json 读取，避免发版时多处手改
+const pkg = JSON.parse(
+  fs.readFileSync(path.join(root, 'package.json'), 'utf8'),
+) as { version?: string };
+
 function num(value: string | undefined, fallback: number): number {
   const n = Number(value);
   return Number.isFinite(n) && n >= 0 ? n : fallback;
@@ -29,6 +34,7 @@ export const config = {
   port: num(process.env.PORT, 8787),
   host: process.env.HOST || '127.0.0.1',
   root,
+  version: pkg.version || '0.0.0',
   dataDir,
   dbPath: process.env.DB_PATH
     ? path.resolve(process.env.DB_PATH)

@@ -1,6 +1,6 @@
 {
   "name": "yingchao",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "private": true,
   "type": "module",
   "description": "影巢 · 豆瓣影视元数据 + 可插拔网盘资源检索",
