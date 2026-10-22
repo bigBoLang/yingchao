@@ -60,6 +60,9 @@ const PLAYER_DEFAULTS = {
   vlc: true,
   potplayer: false,
   mpv: true,
+  infuse: true,
+  vlcIos: true,
+  nplayer: true,
   defaultExternal: 'iina',
 };
 

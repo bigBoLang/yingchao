@@ -166,6 +166,9 @@ export interface SettingsResponse {
     vlc: boolean;
     potplayer: boolean;
     mpv: boolean;
+    infuse: boolean;
+    vlcIos: boolean;
+    nplayer: boolean;
     defaultExternal: string;
   };
   runtime: RuntimeSettings;

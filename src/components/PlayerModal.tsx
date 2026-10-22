@@ -8,6 +8,7 @@ import {
   MonitorPlay,
   Play,
   Server,
+  Smartphone,
   Terminal,
 } from 'lucide-react';
 import type { QuarkFile, Resource } from '../types';
@@ -16,6 +17,11 @@ import { Modal } from './Modal';
 import { useToast } from './Toast';
 import { VideoPlayer } from './VideoPlayer';
 import { formatBytes } from '../lib/format';
+
+function isIOS(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
 
 export function PlayerModal({
   resource,
@@ -38,6 +44,9 @@ export function PlayerModal({
     vlc: true,
     potplayer: false,
     mpv: true,
+    infuse: true,
+    vlcIos: true,
+    nplayer: true,
     defaultExternal: 'iina',
   });
 
@@ -50,6 +59,7 @@ export function PlayerModal({
   const file = files[selected];
   const shareUrl = resource.url;
   const isMobile = resource.cloudType === 'mobile';
+  const ios = isIOS();
 
   useEffect(() => {
     if (!file) {
@@ -117,6 +127,9 @@ export function PlayerModal({
       iina: playUrl ? `iina://weblink?url=${encodeURIComponent(playUrl)}` : '',
       vlc: playUrl ? `vlc://${playUrl}` : '',
       potplayer: playUrl ? `potplayer://${playUrl}` : '',
+      infuse: playUrl ? `infuse://x-callback-url/play?url=${encodeURIComponent(playUrl)}` : '',
+      vlcIos: playUrl ? `vlc-x-callback://x-callback-url/stream?url=${encodeURIComponent(playUrl)}` : '',
+      nplayer: playUrl ? playUrl.replace(/^https?:/, 'nplayer-https:').replace(/^http:/, 'nplayer-http:') : '',
     }),
     [playUrl],
   );
@@ -181,34 +194,59 @@ export function PlayerModal({
                   {copied ? <Check size={15} /> : <Copy size={15} />}
                   复制直链
                 </button>
-                {player.iina ? (
-                  <a className="btn btn-ghost btn-sm" href={protocols.iina}>
-                    <ExternalLink size={15} />
-                    IINA
-                  </a>
-                ) : null}
-                {player.vlc ? (
-                  <a className="btn btn-ghost btn-sm" href={protocols.vlc}>
-                    <ExternalLink size={15} />
-                    VLC
-                  </a>
-                ) : null}
-                {player.potplayer ? (
-                  <a className="btn btn-ghost btn-sm" href={protocols.potplayer}>
-                    <ExternalLink size={15} />
-                    PotPlayer
-                  </a>
-                ) : null}
-                {player.mpv ? (
-                  <button
-                    type="button"
-                    className="btn btn-ghost btn-sm"
-                    onClick={() => copy(`mpv "${playUrl}"`, '已复制 MPV 命令')}
-                  >
-                    <Terminal size={15} />
-                    MPV 命令
-                  </button>
-                ) : null}
+                {!ios ? (
+                  <>
+                    {player.iina ? (
+                      <a className="btn btn-ghost btn-sm" href={protocols.iina}>
+                        <ExternalLink size={15} />
+                        IINA
+                      </a>
+                    ) : null}
+                    {player.vlc ? (
+                      <a className="btn btn-ghost btn-sm" href={protocols.vlc}>
+                        <ExternalLink size={15} />
+                        VLC
+                      </a>
+                    ) : null}
+                    {player.potplayer ? (
+                      <a className="btn btn-ghost btn-sm" href={protocols.potplayer}>
+                        <ExternalLink size={15} />
+                        PotPlayer
+                      </a>
+                    ) : null}
+                    {player.mpv ? (
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => copy(`mpv "${playUrl}"`, '已复制 MPV 命令')}
+                      >
+                        <Terminal size={15} />
+                        MPV 命令
+                      </button>
+                    ) : null}
+                  </>
+                ) : (
+                  <>
+                    {player.infuse ? (
+                      <a className="btn btn-ghost btn-sm" href={protocols.infuse}>
+                        <Smartphone size={15} />
+                        Infuse
+                      </a>
+                    ) : null}
+                    {player.vlcIos ? (
+                      <a className="btn btn-ghost btn-sm" href={protocols.vlcIos}>
+                        <Smartphone size={15} />
+                        VLC
+                      </a>
+                    ) : null}
+                    {player.nplayer ? (
+                      <a className="btn btn-ghost btn-sm" href={protocols.nplayer}>
+                        <Smartphone size={15} />
+                        nPlayer
+                      </a>
+                    ) : null}
+                  </>
+                )}
               </>
             ) : null}
             <a className="btn btn-ghost btn-sm" href={shareUrl} target="_blank" rel="noreferrer">
@@ -221,7 +259,8 @@ export function PlayerModal({
             {isMobile
               ? '移动云盘分享会返回 HLS 播放列表，影巢会把播放列表和分片统一代理到本机，浏览器、IINA、VLC 都可以直接播放。'
               : '夸克分享首次播放会按需转存到你的「影巢播放缓存」目录，之后再次播放会直接复用。'}
-            浏览器无法播放 MKV / H.265 时，请改用 IINA 或 VLC。外部播放器需要先在「设置 → 播放器」中启用。
+            {ios ? ' iOS 建议用 Infuse / VLC / nPlayer 播放 MKV/H.265。' : ' 浏览器无法播放 MKV / H.265 时，请改用 IINA 或 VLC。'}
+            外部播放器需要先在「设置 → 播放器」中启用。
           </p>
         </div>
 

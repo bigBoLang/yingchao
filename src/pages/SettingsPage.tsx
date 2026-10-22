@@ -547,6 +547,26 @@ export function SettingsPage() {
                   </label>
                 ))}
               </div>
+              <div className="player-pref-grid">
+                <h4 style={{gridColumn:'1/-1',margin:'8px 0 4px',fontSize:'0.9rem',color:'var(--muted)'}}>iOS / iPadOS</h4>
+                {[
+                  { key: 'infuse' as const, label: 'Infuse', desc: 'x-callback-url/play，支持 MKV/H.265/4K' },
+                  { key: 'vlcIos' as const, label: 'VLC iOS', desc: 'vlc-x-callback://stream，免费开源' },
+                  { key: 'nplayer' as const, label: 'nPlayer', desc: 'nplayer-https:// 协议，付费功能全' },
+                ].map((item) => (
+                  <label key={item.key} className="check-card">
+                    <input
+                      type="checkbox"
+                      checked={player[item.key]}
+                      onChange={(event) => setPlayer({ ...player, [item.key]: event.target.checked })}
+                    />
+                    <div>
+                      <strong>{item.label}</strong>
+                      <span>{item.desc}</span>
+                    </div>
+                  </label>
+                ))}
+              </div>
               <label className="form-inline">
                 <span>默认外部播放器</span>
                 <select
@@ -557,6 +577,9 @@ export function SettingsPage() {
                   <option value="vlc">VLC</option>
                   <option value="potplayer">PotPlayer</option>
                   <option value="mpv">MPV</option>
+                  <option value="infuse">Infuse (iOS)</option>
+                  <option value="vlcIos">VLC iOS</option>
+                  <option value="nplayer">nPlayer</option>
                 </select>
               </label>
               <div className="settings-note">
