@@ -3777,3 +3777,99 @@ h2 {
   line-height: 1.7;
   color: var(--faint);
 }
+
+/* 播放速度记录 */
+.speed-days {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.speed-days li {
+  display: grid;
+  grid-template-columns: 46px 1fr 78px;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.speed-day-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.speed-day-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), #7bd0ff);
+}
+
+.speed-day-value {
+  text-align: right;
+  color: var(--text);
+}
+
+.speed-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.speed-list li {
+  display: grid;
+  grid-template-columns: 40px 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.speed-tag {
+  justify-self: start;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  color: var(--accent);
+  background: rgba(91, 140, 255, 0.14);
+}
+
+.speed-tag.probe {
+  color: #f0b429;
+  background: rgba(240, 180, 41, 0.14);
+}
+
+.speed-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.speed-value {
+  color: var(--muted);
+}
+
+.speed-time {
+  color: var(--faint);
+}
+
+@media (max-width: 640px) {
+  .speed-list li {
+    grid-template-columns: 40px 1fr;
+  }
+
+  .speed-value,
+  .speed-time {
+    grid-column: 2;
+  }
+}

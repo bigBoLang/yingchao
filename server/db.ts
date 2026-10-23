@@ -10,6 +10,8 @@ import type {
   NormalizedLink,
   PlayHistoryItem,
   Resource,
+  SpeedDaySummary,
+  SpeedSample,
   Subject,
 } from './types.js';
 
@@ -149,6 +151,24 @@ CREATE TABLE IF NOT EXISTS play_history (
   updated_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_play_history_updated ON play_history(updated_at DESC);
+
+-- 播放速度采样：source=play 是真实播放时的实测，source=probe 是定时探针。
+-- 落库后就能按天/时段对比，判断限速到底是账号、线路还是时段问题。
+CREATE TABLE IF NOT EXISTS play_speed_samples (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source TEXT NOT NULL,
+  subject_id TEXT DEFAULT '',
+  title TEXT DEFAULT '',
+  file_name TEXT DEFAULT '',
+  line TEXT DEFAULT '',
+  host TEXT DEFAULT '',
+  avg_speed INTEGER NOT NULL,
+  peak_speed INTEGER NOT NULL,
+  bytes INTEGER NOT NULL,
+  seconds REAL NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_speed_samples_created ON play_speed_samples(created_at DESC);
 
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
@@ -802,6 +822,115 @@ export function clearPlayHistory(): number {
   return db.prepare('DELETE FROM play_history').run().changes;
 }
 
+export interface SpeedSampleInput {
+  source: 'play' | 'probe';
+  subjectId?: string;
+  title?: string;
+  fileName?: string;
+  line?: string;
+  host?: string;
+  avgSpeed: number;
+  peakSpeed: number;
+  bytes: number;
+  seconds: number;
+}
+
+/** 速度采样只留 30 天，长期运行不会把库撑大。 */
+const SPEED_SAMPLE_TTL_MS = 30 * 24 * 3600 * 1000;
+
+export function saveSpeedSample(input: SpeedSampleInput): void {
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO play_speed_samples
+       (source, subject_id, title, file_name, line, host, avg_speed, peak_speed, bytes, seconds, created_at)
+     VALUES
+       (@source, @subjectId, @title, @fileName, @line, @host, @avgSpeed, @peakSpeed, @bytes, @seconds, @createdAt)`,
+  ).run({
+    source: input.source,
+    subjectId: input.subjectId || '',
+    title: input.title || '',
+    fileName: input.fileName || '',
+    line: input.line || '',
+    host: input.host || '',
+    avgSpeed: Math.max(0, Math.round(input.avgSpeed)),
+    peakSpeed: Math.max(0, Math.round(input.peakSpeed)),
+    bytes: Math.max(0, Math.round(input.bytes)),
+    seconds: Math.max(0, input.seconds),
+    createdAt: now,
+  });
+  db.prepare('DELETE FROM play_speed_samples WHERE created_at < ?').run(now - SPEED_SAMPLE_TTL_MS);
+}
+
+export function listSpeedSamples(limit = 30, source?: 'play' | 'probe'): SpeedSample[] {
+  const rows = (
+    source
+      ? db
+          .prepare(
+            'SELECT * FROM play_speed_samples WHERE source = ? ORDER BY created_at DESC LIMIT ?',
+          )
+          .all(source, Math.max(1, limit))
+      : db
+          .prepare('SELECT * FROM play_speed_samples ORDER BY created_at DESC LIMIT ?')
+          .all(Math.max(1, limit))
+  ) as Record<string, unknown>[];
+  return rows.map(rowToSpeedSample);
+}
+
+export function summarizeSpeedSamples(days = 7): SpeedDaySummary[] {
+  const since = Date.now() - Math.max(1, days) * 24 * 3600 * 1000;
+  const rows = db
+    .prepare(
+      `SELECT source, avg_speed, peak_speed, bytes, created_at
+       FROM play_speed_samples WHERE created_at >= ? ORDER BY created_at ASC`,
+    )
+    .all(since) as Array<{ source: string; avg_speed: number; peak_speed: number; bytes: number; created_at: number }>;
+  const buckets = new Map<string, SpeedDaySummary>();
+  for (const row of rows) {
+    const date = new Date(row.created_at);
+    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(
+      date.getDate(),
+    ).padStart(2, '0')}`;
+    let item = buckets.get(key);
+    if (!item) {
+      item = { date: key, avgPlay: 0, peakPlay: 0, avgProbe: 0, peakProbe: 0, playCount: 0, probeCount: 0 };
+      buckets.set(key, item);
+    }
+    if (row.source === 'probe') {
+      item.avgProbe += row.avg_speed;
+      item.peakProbe = Math.max(item.peakProbe, row.peak_speed);
+      item.probeCount += 1;
+    } else {
+      item.avgPlay += row.avg_speed;
+      item.peakPlay = Math.max(item.peakPlay, row.peak_speed);
+      item.playCount += 1;
+    }
+  }
+  return [...buckets.values()]
+    .map((item) => ({
+      ...item,
+      avgPlay: item.playCount ? Math.round(item.avgPlay / item.playCount) : 0,
+      avgProbe: item.probeCount ? Math.round(item.avgProbe / item.probeCount) : 0,
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function rowToSpeedSample(row: Record<string, unknown>): SpeedSample {
+  return {
+    id: Number(row.id),
+    source: row.source === 'probe' ? 'probe' : 'play',
+    subjectId: String(row.subject_id || ''),
+    title: String(row.title || ''),
+    fileName: String(row.file_name || ''),
+    line: String(row.line || ''),
+    host: String(row.host || ''),
+    avgSpeed: Number(row.avg_speed || 0),
+    peakSpeed: Number(row.peak_speed || 0),
+    bytes: Number(row.bytes || 0),
+    seconds: Number(row.seconds || 0),
+    createdAt: Number(row.created_at || 0),
+  };
+}
+
 export function getStats(): {
   subjects: number;
   movies: number;
@@ -1079,6 +1208,7 @@ export function seedDefaults(): void {
       hotRefreshHours: config.hotRefreshHours,
       hotRefreshLimit: config.hotRefreshLimit,
       historyRefreshHours: config.historyRefreshHours,
+      speedProbeHours: config.speedProbeHours,
       schedulerEnabled: config.schedulerEnabled,
     });
   }
@@ -1093,6 +1223,7 @@ export function getRuntimeSettings(): {
   hotRefreshHours: number;
   hotRefreshLimit: number;
   historyRefreshHours: number;
+  speedProbeHours: number;
   schedulerEnabled: boolean;
 } {
   const merged = {
@@ -1101,6 +1232,7 @@ export function getRuntimeSettings(): {
     hotRefreshHours: config.hotRefreshHours,
     hotRefreshLimit: config.hotRefreshLimit,
     historyRefreshHours: config.historyRefreshHours,
+    speedProbeHours: config.speedProbeHours,
     schedulerEnabled: config.schedulerEnabled,
     ...(getSetting<Record<string, unknown>>('runtime_settings') || {}),
   } as {
@@ -1109,6 +1241,7 @@ export function getRuntimeSettings(): {
     hotRefreshHours: number;
     hotRefreshLimit: number;
     historyRefreshHours: number;
+    speedProbeHours: number;
     schedulerEnabled: boolean;
   };
   // 环境变量是硬开关：显式关闭时不允许被数据库里的旧设置覆盖。

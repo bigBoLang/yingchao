@@ -24,11 +24,14 @@ import {
   listCollections,
   listJobs,
   listPlayHistory,
+  listSpeedSamples,
   listSubjects,
   now,
   recoverStaleJobs,
   savePlayHistory,
+  saveSpeedSample,
   setSetting,
+  summarizeSpeedSamples,
   updateChannel,
   upsertSubject,
   seedDefaults,
@@ -109,6 +112,7 @@ function errorMessage(error: unknown): string {
 }
 
 // 播放代理的实时流量统计：按播放 token 累计已输出的字节，前端轮询换算成网速。
+// 同时把整段播放的平均/峰值速度落库，用于长期对比（重启也不会丢）。
 const playTraffic = new Map<
   string,
   {
@@ -117,6 +121,14 @@ const playTraffic = new Map<
     lastAt: number;
     updatedAt: number;
     concurrency: number;
+    firstAt: number;
+    peak: number;
+    windowAt: number;
+    windowBytes: number;
+    line: string;
+    host: string;
+    meta?: { title?: string; fileName?: string; subjectId?: string };
+    saved: boolean;
   }
 >();
 
@@ -124,16 +136,59 @@ function playTrafficEntry(token: string) {
   let entry = playTraffic.get(token);
   if (!entry) {
     const now = Date.now();
-    entry = { bytes: 0, lastBytes: 0, lastAt: now, updatedAt: now, concurrency: 0 };
+    entry = {
+      bytes: 0,
+      lastBytes: 0,
+      lastAt: now,
+      updatedAt: now,
+      concurrency: 0,
+      firstAt: now,
+      peak: 0,
+      windowAt: now,
+      windowBytes: 0,
+      line: '',
+      host: '',
+      saved: false,
+    };
     playTraffic.set(token, entry);
   }
   return entry;
 }
 
+/** 记录一次播放的实测速度。太短的请求（拖动、探测）不入库，避免污染曲线。 */
+function saveTrafficSample(token: string) {
+  const entry = playTraffic.get(token);
+  if (!entry || entry.saved || entry.bytes < 4 * 1024 * 1024) return;
+  const seconds = (Date.now() - entry.firstAt) / 1000;
+  if (seconds < 3) return;
+  entry.saved = true;
+  saveSpeedSample({
+    source: 'play',
+    subjectId: entry.meta?.subjectId,
+    title: entry.meta?.title,
+    fileName: entry.meta?.fileName,
+    line: entry.line,
+    host: entry.host,
+    avgSpeed: entry.bytes / seconds,
+    peakSpeed: entry.peak,
+    bytes: entry.bytes,
+    seconds,
+  });
+}
+
 function addPlayBytes(token: string, bytes: number) {
   const entry = playTrafficEntry(token);
+  const now = Date.now();
   entry.bytes += bytes;
-  entry.updatedAt = Date.now();
+  entry.updatedAt = now;
+  // 1 秒滑动窗口估算瞬时峰值速度。
+  entry.windowBytes += bytes;
+  const windowSeconds = (now - entry.windowAt) / 1000;
+  if (windowSeconds >= 1) {
+    entry.peak = Math.max(entry.peak, entry.windowBytes / windowSeconds);
+    entry.windowBytes = 0;
+    entry.windowAt = now;
+  }
 }
 
 function countPlayBytes(stream: Readable, token: string): Readable {
@@ -331,6 +386,14 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.delete('/api/history', async () => ({ removed: clearPlayHistory() }));
+
+  // 播放速度采样：用于按天/时段对比，判断掉速是限速还是线路问题。
+  app.get('/api/speed-samples', async (request) => {
+    const query = request.query as { limit?: string; days?: string };
+    const limit = Math.min(200, Math.max(1, Number(query.limit) || 30));
+    const days = Math.min(30, Math.max(1, Number(query.days) || 7));
+    return { items: listSpeedSamples(limit), days: summarizeSpeedSamples(days) };
+  });
 
   app.delete('/api/history/:subjectId', async (request, reply) => {
     const { subjectId } = request.params as { subjectId: string };
@@ -621,6 +684,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
         'hotRefreshHours',
         'hotRefreshLimit',
         'historyRefreshHours',
+        'speedProbeHours',
       ] as const) {
         const value = Number((body.runtime as Record<string, unknown>)[key]);
         if (Number.isFinite(value) && value >= 0) next[key] = value;
@@ -813,6 +877,12 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
             : getQuarkTvLinkMode() === 'download'
               ? 'original'
               : 'transcode',
+        // 速度采样要能对上具体影片，写进播放 token 一起带过去。
+        meta: {
+          title: resource.title,
+          fileName: body.name || '',
+          subjectId: resource.subjectId || undefined,
+        },
       });
       // 直链模式：夸克 CDN 需要 Cookie + Referer，播放器直连时得自己带上。
       // 经过 Cloudflare 时不下发 Cookie，避免公网访问者直接拿到登录态。
@@ -956,6 +1026,13 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       }
       const range = request.headers.range;
       if (range) headers.Range = range;
+
+      // 记下这次播放的元信息，流结束时把平均/峰值速度落库。
+      const traffic = playTrafficEntry(token);
+      traffic.host = host;
+      traffic.meta = target.meta;
+      traffic.line = /video-play-hp/i.test(host) ? 'transcode' : 'original';
+      reply.raw.on('close', () => saveTrafficSample(token));
 
       // 夸克直链单连接带宽有限。对非 HLS 的视频流拆成多段并发拉取，
       // 让有会员的账号真正跑满多连接带宽；失败时自动回退到单流。

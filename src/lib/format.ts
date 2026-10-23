@@ -84,6 +84,12 @@ export function formatBytes(size: number): string {
   return `${value.toFixed(value >= 100 ? 0 : 1)} ${units[index]}`;
 }
 
+/** 播放速度：字节/秒 转成 MB/s 文案。 */
+export function formatSpeed(bytesPerSecond: number): string {
+  if (!bytesPerSecond || bytesPerSecond <= 0) return '—';
+  return `${(bytesPerSecond / 1048576).toFixed(2)} MB/s`;
+}
+
 export function formatDuration(seconds: number): string {
   if (!seconds || seconds < 0 || !Number.isFinite(seconds)) return '';
   const total = Math.round(seconds);

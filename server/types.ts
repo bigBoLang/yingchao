@@ -166,6 +166,33 @@ export interface QuarkFile {
   proxyUrl?: string;
 }
 
+/** 一次速度采样：真实播放实测（play）或定时探针（probe）。 */
+export interface SpeedSample {
+  id: number;
+  source: 'play' | 'probe';
+  subjectId: string;
+  title: string;
+  fileName: string;
+  line: string;
+  host: string;
+  /** 字节/秒 */
+  avgSpeed: number;
+  peakSpeed: number;
+  bytes: number;
+  seconds: number;
+  createdAt: number;
+}
+
+export interface SpeedDaySummary {
+  date: string;
+  avgPlay: number;
+  peakPlay: number;
+  avgProbe: number;
+  peakProbe: number;
+  playCount: number;
+  probeCount: number;
+}
+
 export interface QuarkResolveResult {
   shareId: string;
   files: QuarkFile[];

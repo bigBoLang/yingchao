@@ -201,7 +201,33 @@ export interface RuntimeSettings {
   hotRefreshHours: number;
   hotRefreshLimit: number;
   historyRefreshHours: number;
+  speedProbeHours: number;
   schedulerEnabled: boolean;
+}
+
+export interface SpeedSample {
+  id: number;
+  source: 'play' | 'probe';
+  subjectId: string;
+  title: string;
+  fileName: string;
+  line: string;
+  host: string;
+  avgSpeed: number;
+  peakSpeed: number;
+  bytes: number;
+  seconds: number;
+  createdAt: number;
+}
+
+export interface SpeedDaySummary {
+  date: string;
+  avgPlay: number;
+  peakPlay: number;
+  avgProbe: number;
+  peakProbe: number;
+  playCount: number;
+  probeCount: number;
 }
 
 export interface QuarkSpaceResponse {

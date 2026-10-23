@@ -618,6 +618,8 @@ export async function resolveQuarkFileDownload(options: {
   name?: string;
   size?: number;
   line?: QuarkPlayLine;
+  /** 写进播放 token 的元信息，用于速度采样统计。 */
+  meta?: PlayTokenMeta;
 }): Promise<{
   proxyUrl: string;
   directUrl: string;
@@ -683,7 +685,7 @@ export async function resolveQuarkFileDownload(options: {
   const cachedPlay = playUrlCache.get(playKey);
   if (cachedPlay && cachedPlay.expires > Date.now()) {
     return {
-      proxyUrl: signPlayUrl(cachedPlay.url, 'https://pan.quark.cn/'),
+      proxyUrl: signPlayUrl(cachedPlay.url, 'https://pan.quark.cn/', 6 * 3600, options.meta),
       directUrl: cachedPlay.url,
       savedFid: saved.fid,
       reused: saved.reused,
@@ -721,7 +723,7 @@ export async function resolveQuarkFileDownload(options: {
   });
   pruneCache(playUrlCache, 500);
   return {
-    proxyUrl: signPlayUrl(directUrl, 'https://pan.quark.cn/'),
+    proxyUrl: signPlayUrl(directUrl, 'https://pan.quark.cn/', 6 * 3600, options.meta),
     directUrl,
     savedFid: saved.fid,
     reused: saved.reused,
@@ -800,11 +802,25 @@ export async function resolveQuarkShare(
   };
 }
 
-export function signPlayUrl(url: string, referer = '', ttlSeconds = 6 * 3600): string {
+export interface PlayTokenMeta {
+  /** 影片标题 */
+  title?: string;
+  /** 文件名 */
+  fileName?: string;
+  subjectId?: string;
+}
+
+export function signPlayUrl(
+  url: string,
+  referer = '',
+  ttlSeconds = 6 * 3600,
+  meta?: PlayTokenMeta,
+): string {
   const payload = JSON.stringify({
     u: url,
     r: referer,
     e: Math.floor(Date.now() / 1000) + ttlSeconds,
+    ...(meta ? { m: meta } : {}),
   });
   const encoded = Buffer.from(payload).toString('base64url');
   const signature = crypto
@@ -849,7 +865,43 @@ export function signShortPlayUrl(
   return `/api/play/s.${id}`;
 }
 
-export function verifyPlayToken(token: string): { url: string; referer: string } | null {
+/** 定时测速探针用：从仍在有效期的原画直链缓存里挑一条，避免重新转存消耗空间。 */
+export function pickCachedPlayTarget(): {
+  url: string;
+  referer: string;
+  line: string;
+  host: string;
+  fileName: string;
+} | null {
+  const now = Date.now();
+  let fallback: { url: string; line: string; fid: string } | null = null;
+  for (const item of playUrlCache.values()) {
+    if (item.expires <= now) continue;
+    if (item.line === 'original') {
+      fallback = { url: item.url, line: item.line, fid: item.fid };
+      break;
+    }
+    if (!fallback) fallback = { url: item.url, line: item.line, fid: item.fid };
+  }
+  if (!fallback) return null;
+  let host = '';
+  try {
+    host = new URL(fallback.url).host;
+  } catch {
+    host = '';
+  }
+  return {
+    url: fallback.url,
+    referer: 'https://pan.quark.cn/',
+    line: fallback.line,
+    host,
+    fileName: fallback.line === 'transcode' ? 'TV 转码线路' : '原画直链',
+  };
+}
+
+export function verifyPlayToken(
+  token: string,
+): { url: string; referer: string; meta?: PlayTokenMeta } | null {
   if (token.startsWith('s.')) {
     const id = token.slice(2);
     const target = shortPlayTargets.get(id);
@@ -874,9 +926,10 @@ export function verifyPlayToken(token: string): { url: string; referer: string }
       u?: string;
       r?: string;
       e?: number;
+      m?: PlayTokenMeta;
     };
     if (!payload.u || !payload.e || payload.e < Math.floor(Date.now() / 1000)) return null;
-    return { url: payload.u, referer: payload.r || '' };
+    return { url: payload.u, referer: payload.r || '', ...(payload.m ? { meta: payload.m } : {}) };
   } catch {
     return null;
   }

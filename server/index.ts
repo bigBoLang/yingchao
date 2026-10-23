@@ -4,6 +4,8 @@ import { config } from './config.js';
 import { authEnabled, registerAuth } from './auth.js';
 import { bootstrapSettings, registerRoutes, registerStatic } from './routes.js';
 import { startScheduler, stopScheduler } from './scheduler.js';
+import { pickCachedPlayTarget } from './quark.js';
+import { registerProbeTargetProvider } from './speed-probe.js';
 import { startPansou, stopPansou } from './services.js';
 import { getServerPublicIp, lanRedirectUrl } from './lan.js';
 
@@ -21,6 +23,9 @@ await app.register(cookie, {
 });
 
 bootstrapSettings();
+
+// 速度探针从播放直链缓存里取目标，避免为了测速反复转存文件。
+registerProbeTargetProvider(pickCachedPlayTarget);
 
 // 必须在注册路由之前挂载，钩子只对之后注册的路由生效。
 registerAuth(app);

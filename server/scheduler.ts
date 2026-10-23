@@ -13,8 +13,9 @@ import {
 import { refreshAllCollections } from './douban.js';
 import { searchSubjectResources } from './services/search.js';
 import { validateStaleResources } from './validator.js';
+import { probePlaySpeed, type ProbeResult } from './speed-probe.js';
 
-type JobName = 'collections' | 'hot-resources' | 'history-resources' | 'validate';
+type JobName = 'collections' | 'hot-resources' | 'history-resources' | 'validate' | 'speed-probe';
 const running = new Set<JobName>();
 
 function lastFinished(name: JobName): number {
@@ -172,12 +173,36 @@ export async function runValidateJob(): Promise<{
   return { skipped: outcome.skipped, error: outcome.error, ...(result || {}) };
 }
 
+export async function runSpeedProbeJob(): Promise<{
+  skipped?: boolean;
+  error?: string;
+  avgSpeed?: number;
+  peakSpeed?: number;
+  reason?: string;
+}> {
+  const outcome = await withJob('speed-probe', () => probePlaySpeed());
+  const result = outcome.result as ProbeResult | undefined;
+  if (outcome.skipped) return { skipped: true };
+  if (outcome.error) return { error: outcome.error };
+  return {
+    ...(result?.skipped ? { skipped: true } : {}),
+    ...(result?.reason ? { reason: result.reason } : {}),
+    ...(result?.avgSpeed != null
+      ? {
+          avgSpeed: Math.round(result.avgSpeed / 1024),
+          peakSpeed: Math.round((result.peakSpeed || 0) / 1024),
+        }
+      : {}),
+  };
+}
+
 export async function runJob(
   name: string,
 ): Promise<{ skipped?: boolean; error?: string; [key: string]: unknown }> {
   if (name === 'collections') return runCollectionsJob();
   if (name === 'hot-resources') return runHotResourcesJob();
   if (name === 'history-resources') return runHistoryResourcesJob();
+  if (name === 'speed-probe') return runSpeedProbeJob();
   if (name === 'validate') return runValidateJob();
   throw new Error(`未知任务：${name}`);
 }
@@ -199,6 +224,10 @@ async function tick(): Promise<void> {
   if (stats.resources > 0 && due('validate', runtime.validateHours)) {
     await runValidateJob();
   }
+  // 速度探针不依赖数据量，只要有过播放直链缓存就会真的拉几秒测速。
+  if (due('speed-probe', runtime.speedProbeHours)) {
+    await runSpeedProbeJob();
+  }
 }
 
 let interval: NodeJS.Timeout | null = null;
@@ -216,7 +245,7 @@ export function startScheduler(): void {
   interval = setInterval(() => {
     tick().catch((error) => console.error('[scheduler] tick failed:', error));
   }, 5 * 60 * 1000);
-  console.log('[scheduler] 已启动：榜单/热门资源/链接巡检');
+  console.log('[scheduler] 已启动：榜单/热门资源/链接巡检/播放记录缓存/速度探针');
 }
 
 export function stopScheduler(): void {

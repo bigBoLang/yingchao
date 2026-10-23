@@ -74,6 +74,8 @@ export const config = {
   // 播放记录相关影片的资源缓存与巡检
   historyRefreshHours: Number(process.env.HISTORY_REFRESH_HOURS || 6),
   historyRefreshLimit: Number(process.env.HISTORY_REFRESH_LIMIT || 8),
+  // 速度探针间隔（小时）：定期实测夸克 CDN 速度并落库，便于对比掉速。
+  speedProbeHours: Number(process.env.SPEED_PROBE_HOURS || 1),
   // 夸克网盘占用达到阈值后，只清理《影巢播放缓存》目录里的旧文件
   quarkSpaceThreshold: Number(process.env.QUARK_SPACE_THRESHOLD || 0.7),
   quarkSpaceTarget: Number(process.env.QUARK_SPACE_TARGET || 0.6),

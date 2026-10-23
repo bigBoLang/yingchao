@@ -32,13 +32,15 @@ import type {
   QuarkSpaceResponse,
   RuntimeSettings,
   SettingsResponse,
+  SpeedDaySummary,
+  SpeedSample,
 } from '../types';
 import { api } from '../api';
 import { useApi } from '../hooks/useApi';
 import { useToast } from '../components/Toast';
 import { ChannelModal, type ChannelPreset } from '../components/ChannelModal';
 import { LoadingBlock } from '../components/EmptyState';
-import { formatDate, relativeTime } from '../lib/format';
+import { formatDate, formatSpeed, relativeTime } from '../lib/format';
 
 type Tab = 'channels' | 'cache' | 'player' | 'about';
 
@@ -75,6 +77,7 @@ export function SettingsPage() {
   const [space, setSpace] = useState<QuarkSpaceResponse | null>(null);
   const [spaceError, setSpaceError] = useState('');
   const [cleaningSpace, setCleaningSpace] = useState(false);
+  const [speed, setSpeed] = useState<{ items: SpeedSample[]; days: SpeedDaySummary[] } | null>(null);
 
   const overview = useApi<AdminOverview>(() => api('/api/admin/overview'), []);
   const settings = useApi<SettingsResponse>(() => api('/api/settings'), []);
@@ -106,8 +109,17 @@ export function SettingsPage() {
       });
   };
 
+  const loadSpeed = () => {
+    api<{ items: SpeedSample[]; days: SpeedDaySummary[] }>('/api/speed-samples?limit=20&days=7')
+      .then(setSpeed)
+      .catch(() => setSpeed(null));
+  };
+
   useEffect(() => {
-    if (tab === 'cache') loadSpace();
+    if (tab === 'cache') {
+      loadSpace();
+      loadSpeed();
+    }
   }, [tab]);
 
   const cleanSpace = async () => {
@@ -496,6 +508,16 @@ export function SettingsPage() {
               onRun={() => runJob('validate')}
               icon={<ShieldCheck size={18} />}
             />
+            <JobCard
+              title="实测播放速度"
+              description="从缓存直链拉几秒数据实测夸克 CDN 速度并写入曲线，用于对比掉速。"
+              running={runningJob === 'speed-probe'}
+              onRun={() => {
+                runJob('speed-probe');
+                setTimeout(loadSpeed, 1500);
+              }}
+              icon={<Zap size={18} />}
+            />
           </div>
 
           <div className="settings-card">
@@ -528,6 +550,61 @@ export function SettingsPage() {
             ) : (
               <p className="settings-hint">
                 {spaceError || '配置夸克 Cookie 后可查看剩余空间。'}
+              </p>
+            )}
+          </div>
+
+          <div className="settings-card">
+            <div className="settings-card-head">
+              <h3>播放速度记录</h3>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={loadSpeed}>
+                <RefreshCw size={15} />
+                刷新
+              </button>
+            </div>
+            {speed && speed.items.length ? (
+              <>
+                {speed.days.length ? (
+                  <ul className="speed-days">
+                    {speed.days.map((day) => {
+                      const best = Math.max(day.peakPlay, day.peakProbe);
+                      const scale = Math.max(1, ...speed.days.map((d) => Math.max(d.peakPlay, d.peakProbe)));
+                      return (
+                        <li key={day.date}>
+                          <span className="speed-day-date">{day.date.slice(5)}</span>
+                          <span className="speed-day-bar">
+                            <span style={{ width: `${Math.max(3, (best / scale) * 100)}%` }} />
+                          </span>
+                          <span className="speed-day-value">{formatSpeed(best)}</span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                ) : null}
+                <ul className="speed-list">
+                  {speed.items.slice(0, 8).map((item) => (
+                    <li key={item.id}>
+                      <span className={`speed-tag ${item.source === 'probe' ? 'probe' : ''}`}>
+                        {item.source === 'probe' ? '测速' : '播放'}
+                      </span>
+                      <span className="speed-name" title={item.fileName}>
+                        {item.title || item.fileName || item.host || '播放'}
+                      </span>
+                      <span className="speed-value">
+                        平均 {formatSpeed(item.avgSpeed)} / 峰值 {formatSpeed(item.peakSpeed)}
+                      </span>
+                      <span className="speed-time">{relativeTime(item.createdAt / 1000)}</span>
+                    </li>
+                  ))}
+                </ul>
+                <p className="settings-hint">
+                  采样保留 30 天。真实播放会记录平均与峰值速度，定时探针每小时实测一次，
+                  掉速时可以对比不同时段和线路。数值为「本机到夸克 CDN」的实际吞吐。
+                </p>
+              </>
+            ) : (
+              <p className="settings-hint">
+                还没有速度记录。播放任意一部影片，或点上面「实测播放速度」测一次就会出现。
               </p>
             )}
           </div>
@@ -586,6 +663,15 @@ export function SettingsPage() {
                     min={1}
                     value={runtime.historyRefreshHours ?? 6}
                     onChange={(event) => setRuntime({ ...runtime, historyRefreshHours: Number(event.target.value) })}
+                  />
+                </label>
+                <label>
+                  <span>速度探针间隔（小时）</span>
+                  <input
+                    type="number"
+                    min={1}
+                    value={runtime.speedProbeHours ?? 1}
+                    onChange={(event) => setRuntime({ ...runtime, speedProbeHours: Number(event.target.value) })}
                   />
                 </label>
                 <label className="switch-label">
@@ -1048,7 +1134,7 @@ function JobRow({ job }: { job: Job }) {
   return (
     <div className="job-row">
       <span className="job-name">
-        {job.name === 'collections' ? '刷新榜单' : job.name === 'hot-resources' ? '热门资源' : job.name === 'history-resources' ? '播放记录资源' : job.name === 'validate' ? '链接巡检' : job.name}
+        {job.name === 'collections' ? '刷新榜单' : job.name === 'hot-resources' ? '热门资源' : job.name === 'history-resources' ? '播放记录资源' : job.name === 'validate' ? '链接巡检' : job.name === 'speed-probe' ? '速度探针' : job.name}
       </span>
       <span className={`job-status ${job.status}`}>
         {job.status === 'ok' ? <CheckCircle2 size={13} /> : job.status === 'error' ? <XCircle size={13} /> : <Loader2 size={13} className="spin" />}
