@@ -42,7 +42,7 @@ function proxyEndpoint(): { host: string; port: number } | null {
 }
 
 /** 探测本地代理端口是否在监听，代理软件退出后就不会再白等连接超时。 */
-async function proxyReachable(): Promise<boolean> {
+export async function isProxyReachable(): Promise<boolean> {
   const now = Date.now();
   if (proxyProbe && now - proxyProbe.at < PROXY_PROBE_TTL_MS) {
     return proxyProbe.reachable;
@@ -138,7 +138,7 @@ export async function smartFetch(
   init?: RequestInit,
 ): Promise<Response> {
   if (!hasProxyEnv()) return directFetch(input, init);
-  if (!(await proxyReachable())) return directFetch(input, init);
+  if (!(await isProxyReachable())) return directFetch(input, init);
   try {
     return await proxyFetch(input, init);
   } catch (error) {

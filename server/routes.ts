@@ -3,6 +3,7 @@ import path from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { config } from './config.js';
+import { isSameNetwork, lanUrls } from './lan.js';
 import {
   createChannel,
   createUser,
@@ -707,8 +708,12 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     const playProxyMode = config.playProxyMode;
     let playBaseUrl = request.headers.origin || request.headers.referer || '';
     if (playBaseUrl) {
-      // 保留 origin（含协议和端口）
-      playBaseUrl = playBaseUrl.replace(/\/+$/, '');
+      // 保留 origin（含协议和端口）；Referer 会带页面路径，这里只取源。
+      try {
+        playBaseUrl = new URL(playBaseUrl).origin;
+      } catch {
+        playBaseUrl = playBaseUrl.replace(/\/+$/, '');
+      }
     } else {
       // 0.0.0.0 是监听地址不是可访问地址，兜底换成 localhost
       const host = config.host === '0.0.0.0' ? 'localhost' : config.host;
@@ -734,6 +739,10 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       },
       playBaseUrl,
       playProxyMode,
+      // 局域网直连地址：在家用这个地址打开，播放不经过 Cloudflare。
+      lanUrls: lanUrls(),
+      sameNetwork: await isSameNetwork(request),
+      autoLanRedirect: config.autoLanRedirect,
     };
   });
 

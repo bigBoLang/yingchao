@@ -67,6 +67,12 @@ export function SettingsPage() {
     () => api('/api/channels'),
     [],
   );
+  const appConfig = useApi<{
+    lanUrls: string[];
+    sameNetwork: boolean;
+    autoLanRedirect: boolean;
+    playProxyMode: string;
+  }>(() => api('/api/config'), []);
 
   useEffect(() => {
     if (settings.data?.runtime) setRuntime(settings.data.runtime);
@@ -251,6 +257,14 @@ export function SettingsPage() {
       setSavingSettings(false);
     }
   };
+
+  const lanUrl = appConfig.data?.lanUrls?.[0] || '';
+  let onLan = false;
+  try {
+    onLan = Boolean(lanUrl) && new URL(lanUrl).origin === window.location.origin;
+  } catch {
+    onLan = false;
+  }
 
   if (overview.loading && !overview.data) {
     return (
@@ -682,6 +696,46 @@ export function SettingsPage() {
 
             <p className="form-note">
               播放时仍可在播放弹窗里随时切换线路。TV token 仅保存在本机 SQLite，约 7 天有效；过期后重新扫码即可。
+            </p>
+          </div>
+
+          <div className="settings-card">
+            <div className="settings-card-head">
+              <div>
+                <h3>网络与播放地址</h3>
+                <p>视频字节会经过当前访问的地址；在家走局域网直连最快。</p>
+              </div>
+              <span className={`status-pill ${onLan || appConfig.data?.sameNetwork ? 'ok' : 'warn'}`}>
+                {onLan ? '局域网直连' : appConfig.data?.sameNetwork ? '同一网络' : '公网访问'}
+              </span>
+            </div>
+            <p className="form-note">
+              当前页面：<code>{window.location.origin}</code>
+            </p>
+            {lanUrl && !onLan ? (
+              <div className="cookie-row">
+                <code>{lanUrl}</code>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={() => {
+                    const target = new URL(lanUrl);
+                    target.pathname = window.location.pathname;
+                    target.search = window.location.search;
+                    window.location.href = target.toString();
+                  }}
+                >
+                  切换到局域网
+                </button>
+              </div>
+            ) : null}
+            <p className="form-note">
+              {onLan
+                ? '当前已经通过局域网直连，播放不经过 Cloudflare。'
+                : appConfig.data?.autoLanRedirect
+                  ? '从公网域名访问、且客户端与服务器在同一家庭网络时，会自动跳转到局域网地址，播放不再经过 Cloudflare。'
+                  : '自动跳转已关闭（AUTO_LAN_REDIRECT=false）。'}
+              远程访问（手机流量、公司网络）仍会经过隧道，速度受家庭上传带宽限制。
             </p>
           </div>
 

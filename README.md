@@ -35,6 +35,10 @@ npm run build
 npm start              # http://localhost:8787
 ```
 
+> 启动时会自动拉起本机 PanSou（默认 `localhost:8888`），退出时一起关闭。
+> 如果 PanSou 不在默认位置，用 `PANSOU_BIN` 指定可执行文件路径；
+> 想让影巢只连接已有的远程 PanSou，把 `PANSOU_BASE_URL` 改成远程地址即可。
+
 ### 局域网 / 公网访问
 
 ```bash
@@ -47,6 +51,16 @@ cloudflared tunnel --url http://localhost:8787
 
 # 固定域名：把域名 NS 改到 Cloudflare，建 Named Tunnel + DNS 路由
 ```
+
+> **播放速度提醒**：所有视频字节都会经过访问它的那个域名。走 Cloudflare
+> 隧道时，即使人在家里，流量也会绕到 Cloudflare 再回来（实测约 0.1 MB/s，
+> 局域网直连约 6 MB/s）。
+>
+> 影巢会自动识别「客户端与服务器同一家庭网络」：从公网域名打开页面时，
+> 自动 302 到 `http://<局域网IP>:8787`，之后播放完全不经过 Cloudflare。
+> 临时想留在域名上，访问 `https://域名/?lan=0` 即可（记一年）；
+> 访问 `https://域名/?lan=1` 可恢复自动跳转。
+> 远程访问（手机流量、公司网络）仍会走隧道，速度受家庭上传带宽限制。
 
 ## 📸 界面预览
 
@@ -76,6 +90,10 @@ cloudflared tunnel --url http://localhost:8787
 | `APP_SECRET` | 播放链接签名密钥，**生产环境必改** |
 | `HTTPS_PROXY` | 可选出站代理；代理在线时优先使用，离线时自动直连 |
 | `PLAY_PROXY_MODE` | `tunnel`（跟随访问域名，默认）/ `direct`（配合 `PUBLIC_IP` 直连） |
+| `PANSOU_AUTOSTART` | 启动时自动拉起本机 PanSou（默认 `true`） |
+| `PANSOU_BIN` | PanSou 可执行文件路径，不填则自动查找 |
+| `AUTO_LAN_REDIRECT` | 同一家庭网络从公网域名访问时，自动跳到局域网直连（默认 `true`） |
+| `LAN_IP` | 多网卡时手动指定局域网地址（如 `192.168.1.10`） |
 | `HOST=0.0.0.0` | 局域网访问 |
 | `PORT=8787` | 服务端口 |
 

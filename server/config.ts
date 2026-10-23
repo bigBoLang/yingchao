@@ -40,6 +40,9 @@ export const config = {
     ? path.resolve(process.env.DB_PATH)
     : path.join(dataDir, 'yingchao.db'),
   pansouBaseUrl: (process.env.PANSOU_BASE_URL || 'http://localhost:8888').replace(/\/$/, ''),
+  // 启动影巢时自动拉起本机 PanSou（仅当 PanSou 地址指向本机时生效）。
+  pansouAutostart: process.env.PANSOU_AUTOSTART !== 'false',
+  pansouBin: process.env.PANSOU_BIN || '',
   zhuyunBaseUrl: (process.env.ZHUYUN_BASE_URL || 'https://pan.zhuyunso.top').replace(/\/$/, ''),
   enableZhuyun: process.env.ENABLE_ZHUYUN !== 'false',
   quarkCookie: process.env.QUARK_COOKIE || '',
@@ -57,6 +60,10 @@ export const config = {
   playProxyMode: (process.env.PLAY_PROXY_MODE as 'tunnel' | 'direct') || 'tunnel',
   // 直连模式下的公网/IP 地址（不含协议和端口，如 192.168.1.100 或 yingchao.example.com）
   publicIp: process.env.PUBLIC_IP || '',
+  // 从公网域名访问且客户端和服务器在同一家庭网络时，自动跳到局域网直连（播放不再绕 Cloudflare）
+  autoLanRedirect: process.env.AUTO_LAN_REDIRECT !== 'false',
+  // 有多块网卡时可手动指定局域网地址，不填则自动选择 en0 / 192.168.x
+  lanIp: process.env.LAN_IP || '',
   userAgent:
     process.env.USER_AGENT ||
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
