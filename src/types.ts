@@ -76,7 +76,13 @@ export interface Stats {
   } | null;
 }
 
-export type ChannelType = 'pansou' | 'zhuyun' | 'http';
+export type ChannelType =
+  | 'pansou'
+  | 'zhuyun'
+  | 'http'
+  | 'quarkpanso'
+  | 'yunso'
+  | 'panws';
 
 export interface Channel {
   id: string;

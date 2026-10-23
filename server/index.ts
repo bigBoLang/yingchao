@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
 import { config } from './config.js';
+import { authEnabled, registerAuth } from './auth.js';
 import { bootstrapSettings, registerRoutes, registerStatic } from './routes.js';
 import { startScheduler, stopScheduler } from './scheduler.js';
 import { startPansou, stopPansou } from './services.js';
@@ -20,6 +21,9 @@ await app.register(cookie, {
 });
 
 bootstrapSettings();
+
+// 必须在注册路由之前挂载，钩子只对之后注册的路由生效。
+registerAuth(app);
 
 await registerRoutes(app);
 await registerStatic(app);
@@ -67,7 +71,15 @@ try {
   console.log(`  API:  http://${config.host}:${config.port}/api/health`);
   console.log(`  Web:  http://${config.host}:${config.port}`);
   console.log(`  数据: ${config.dataDir}`);
+  console.log(`  访问密码: ${authEnabled() ? '已启用' : '未启用'}`);
   console.log('');
+  if (!authEnabled() && config.host !== '127.0.0.1' && config.host !== 'localhost') {
+    console.warn(
+      '  ⚠ 服务监听在非本机地址且未设置访问密码，能访问该端口的人都可以修改设置、渠道和夸克 Cookie。',
+    );
+    console.warn('    建议在 .env 中配置 AUTH_USER / AUTH_PASS，或把 HOST 改回 127.0.0.1。');
+    console.warn('');
+  }
   // 依赖服务异步启动，不阻塞 Web 服务对外提供页面。
   void startPansou();
   void getServerPublicIp();

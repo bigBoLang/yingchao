@@ -26,6 +26,7 @@ import {
 import type {
   AdminOverview,
   Channel,
+  ChannelType,
   Job,
   RuntimeSettings,
   SettingsResponse,
@@ -38,6 +39,15 @@ import { LoadingBlock } from '../components/EmptyState';
 import { formatDate, relativeTime } from '../lib/format';
 
 type Tab = 'channels' | 'cache' | 'player' | 'about';
+
+const CHANNEL_TYPE_LABELS: Record<ChannelType, string> = {
+  pansou: 'PanSou',
+  zhuyun: '竹云盘搜',
+  http: 'HTTP',
+  quarkpanso: 'QuarkPanSo',
+  yunso: '小云搜索',
+  panws: '盘万搜',
+};
 
 const TABS: Array<{ id: Tab; label: string; icon: React.ReactNode }> = [
   { id: 'channels', label: '渠道管理', icon: <Server size={16} /> },
@@ -332,7 +342,7 @@ export function SettingsPage() {
                     <div className="channel-title-row">
                       <h3>{channel.name}</h3>
                       <span className={`mini-badge type-${channel.type}`}>
-                        {channel.type === 'pansou' ? 'PanSou' : channel.type === 'zhuyun' ? '竹云盘搜' : 'HTTP'}
+                        {CHANNEL_TYPE_LABELS[channel.type] || channel.type}
                       </span>
                       <span className={`mini-badge ${channel.enabled ? 'on' : 'off'}`}>
                         {channel.enabled ? '启用' : '停用'}
@@ -381,15 +391,16 @@ export function SettingsPage() {
               </article>
             ))}
             {!channelsApi.data?.items.length ? (
-              <div className="inline-empty">还没有渠道，点击右上角添加 PanSou 或竹云盘搜。</div>
+              <div className="inline-empty">还没有渠道，点击右上角添加 PanSou 或公共网盘搜索。</div>
             ) : null}
           </div>
 
           <div className="settings-note">
             <Info size={16} />
             <p>
-              PanSou 需要先自行部署（Docker：<code>ghcr.io/fish2018/pansou:latest</code>），默认地址为
-              <code>http://localhost:8888</code>。竹云盘搜是公共节点，可能触发人机校验，建议作为备用。
+              PanSou 默认由影巢自动拉起并监听 <code>http://localhost:8888</code>。竹云盘搜、L9、小云搜索、
+              盘万搜和 QuarkPanSo 都是公共节点，可能限流或触发人机校验，建议保留多个渠道互为备用。
+              Telegram 频道需要代理才能访问 t.me；腾讯 QQ 频道需先在 PanSou 的 QQPD 管理页扫码登录。
             </p>
           </div>
         </section>

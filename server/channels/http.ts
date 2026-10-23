@@ -1,6 +1,7 @@
 import type { Channel, NormalizedLink, SearchQuery } from '../types.js';
 import { config } from '../config.js';
 import { smartFetch } from '../direct-fetch.js';
+import { assertPublicUrl } from '../net-guard.js';
 import {
   firstString,
   normalizeLink,
@@ -79,6 +80,9 @@ export async function searchHttp(
       headers['Content-Type'] = cfg.search?.contentType || 'application/json';
     }
   }
+
+  // 自定义渠道的地址由用户填写，默认不允许指向内网，避免服务端被当作内网探测跳板。
+  if (!config.allowPrivateHosts) await assertPublicUrl(endpoint);
 
   const response = await smartFetch(endpoint, {
     method,

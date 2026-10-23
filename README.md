@@ -7,7 +7,7 @@
 ## ✨ 核心功能
 
 - **豆瓣同步**：正在热映、Top250、热门剧集、分类浏览
-- **多渠道检索**：PanSou（默认）、竹云盘搜、自定义 HTTP API
+- **多渠道检索**：PanSou（默认）、竹云盘搜、L9、小云搜索、盘万搜、QuarkPanSo、Telegram / 腾讯 QQ 频道、自定义 HTTP API
 - **夸克 / 移动云盘原生播放**：
   - 夸克：转存 → 多分片并发拉流 → 代理直链，**4K 原盘 20+ MB/s**
   - 移动云盘：HLS 代理重写 → 浏览器 / IINA / VLC 直接播
@@ -38,6 +38,11 @@ npm start              # http://localhost:8787
 > 启动时会自动拉起本机 PanSou（默认 `localhost:8888`），退出时一起关闭。
 > 如果 PanSou 不在默认位置，用 `PANSOU_BIN` 指定可执行文件路径；
 > 想让影巢只连接已有的远程 PanSou，把 `PANSOU_BASE_URL` 改成远程地址即可。
+>
+> 公共搜索源（竹云盘搜、L9、小云搜索、盘万搜、QuarkPanSo）无需登录，但都有频控或
+> 人机校验，结果可能时多时少；影巢会自动跳过暂时不可用的渠道，不影响其它来源。
+> Telegram 频道需要 PanSou 能访问 `t.me`（通常要开代理）；腾讯 QQ 频道需要
+> PanSou 启用 `qqpd` 插件，并在 `http://localhost:8888/qqpd/<hash>` 扫码登录、配置频道。
 
 ### 局域网 / 公网访问
 
@@ -92,15 +97,20 @@ cloudflared tunnel --url http://localhost:8787
 | `PLAY_PROXY_MODE` | `tunnel`（跟随访问域名，默认）/ `direct`（配合 `PUBLIC_IP` 直连） |
 | `PANSOU_AUTOSTART` | 启动时自动拉起本机 PanSou（默认 `true`） |
 | `PANSOU_BIN` | PanSou 可执行文件路径，不填则自动查找 |
+| `ENABLE_ZHUYUN` | 是否在首次启动时创建竹云盘搜渠道（默认 `true`） |
+| `ZHUYUN_BASE_URL` / `L9_BASE_URL` / `YUNSO_BASE_URL` / `PANWS_BASE_URL` / `QUARKPANSO_BASE_URL` | 对应公共搜索源地址 |
+| `ENABLE_L9` / `ENABLE_YUNSO` / `ENABLE_PANWS` / `ENABLE_QUARKPANSO` | 是否自动创建对应公共渠道（默认 `true`） |
 | `AUTO_LAN_REDIRECT` | 同一家庭网络从公网域名访问时，自动跳到局域网直连（默认 `true`） |
 | `LAN_IP` | 多网卡时手动指定局域网地址（如 `192.168.1.10`） |
 | `HOST=0.0.0.0` | 局域网访问 |
 | `PORT=8787` | 服务端口 |
+| `AUTH_USER` / `AUTH_PASS` | 可选访问密码，两者都填即启用 HTTP Basic 登录 |
+| `ALLOW_PRIVATE_HOSTS` | 允许自定义渠道/视频直链访问内网地址（默认 `false`） |
 
 ## 🔐 安全提醒
 
 - Cookie 仅存在本机 SQLite，**绝不上传**
-- 服务无鉴权，**仅在可信网络**或配合 Cloudflare Access 使用
+- 服务默认无鉴权，**仅在可信网络**或配合 Cloudflare Access 使用；暴露到公网前请配置 `AUTH_USER` / `AUTH_PASS`
 - 多地同时播放大文件易触发夸克风控，建议配合 Access 限制访问
 
 ## 📄 License

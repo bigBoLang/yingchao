@@ -17,6 +17,27 @@ const TYPE_LABELS: Record<ChannelType, string> = {
   pansou: 'PanSou',
   zhuyun: '竹云盘搜',
   http: '自定义 HTTP',
+  quarkpanso: 'QuarkPanSo',
+  yunso: '小云搜索',
+  panws: '盘万搜',
+};
+
+const BASE_URL_PLACEHOLDERS: Record<ChannelType, string> = {
+  pansou: 'http://localhost:8888',
+  zhuyun: 'https://pan.zhuyunso.top',
+  http: 'https://example.com',
+  quarkpanso: 'https://www.quarkpanso.com',
+  yunso: 'https://www.yunso.net',
+  panws: 'https://panws.net',
+};
+
+const BASE_URL_HINTS: Record<ChannelType, string> = {
+  pansou: 'PanSou 服务根地址，不需要带 /api/search。',
+  zhuyun: '竹云盘搜节点地址。公共节点可能触发人机校验。',
+  http: '自定义接口的根地址，可在下方配置相对路径。',
+  quarkpanso: 'QuarkPanSo 站点根地址；公共接口有频控，建议保留默认地址。',
+  yunso: '小云搜索站点根地址，使用其公开 opensearch 接口。',
+  panws: '盘万搜站点根地址，直接解析服务端渲染的搜索页。',
 };
 
 export function ChannelModal({
@@ -103,7 +124,7 @@ export function ChannelModal({
   return (
     <Modal
       title={channel ? '编辑渠道' : '添加检索渠道'}
-      subtitle="渠道可以是 PanSou、竹云盘搜，也可以是任意返回 JSON 的搜索 API"
+      subtitle="渠道可以是 PanSou、竹云盘搜、公共网盘搜索，也可以是任意返回 JSON 的搜索 API"
       onClose={onClose}
       wide
       footer={
@@ -122,7 +143,7 @@ export function ChannelModal({
             {presets.map((preset) => (
               <button
                 type="button"
-                key={preset.type}
+                key={`${preset.type}-${preset.name}`}
                 className="preset-card"
                 onClick={() => applyPreset(preset)}
               >
@@ -141,9 +162,11 @@ export function ChannelModal({
           <label>
             <span>渠道类型</span>
             <select value={type} onChange={(event) => setType(event.target.value as ChannelType)}>
-              <option value="pansou">PanSou</option>
-              <option value="zhuyun">竹云盘搜</option>
-              <option value="http">自定义 HTTP</option>
+              {(Object.keys(TYPE_LABELS) as ChannelType[]).map((value) => (
+                <option key={value} value={value}>
+                  {TYPE_LABELS[value]}
+                </option>
+              ))}
             </select>
           </label>
           <label>
@@ -155,15 +178,9 @@ export function ChannelModal({
             <input
               value={baseUrl}
               onChange={(event) => setBaseUrl(event.target.value)}
-              placeholder={type === 'pansou' ? 'http://localhost:8888' : type === 'zhuyun' ? 'https://pan.zhuyunso.top' : 'https://example.com'}
+              placeholder={BASE_URL_PLACEHOLDERS[type]}
             />
-            <small>
-              {type === 'pansou'
-                ? 'PanSou 服务根地址，不需要带 /api/search。'
-                : type === 'zhuyun'
-                  ? '竹云盘搜节点地址。公共节点可能触发人机校验。'
-                  : '自定义接口的根地址，可在下方配置相对路径。'}
-            </small>
+            <small>{BASE_URL_HINTS[type]}</small>
           </label>
           <label>
             <span>优先级</span>
@@ -200,9 +217,13 @@ export function ChannelModal({
           <small>
             {type === 'zhuyun'
               ? 'maxDecode 控制每次最多解析多少条链接，timeoutMs 控制 SSE 读取时长。'
-              : type === 'pansou'
-                ? '可配置 apiKey、headers、channels、plugins、searchPath 等；留空即可。'
-                : 'search.url 支持 {query}、{queryEncoded}、{year} 占位符；itemsPath 指向结果数组；fields 做字段映射。'}
+              : type === 'quarkpanso'
+                ? 'size 控制返回条数，minIntervalMs 控制请求间隔（默认 60000 毫秒）；频控期间会自动跳过。'
+                : type === 'yunso' || type === 'panws'
+                  ? 'maxResults 控制最多保留多少条结果，timeoutMs 控制请求超时。'
+                  : type === 'pansou'
+                    ? '可配置 apiKey、headers、channels、plugins、onlyCloudTypes、searchPath 等；留空即可。'
+                    : 'search.url 支持 {query}、{queryEncoded}、{year} 占位符；itemsPath 指向结果数组；fields 做字段映射。'}
           </small>
         </label>
 

@@ -773,9 +773,128 @@ function ensureMobileChannel(): void {
   setSetting('mobile_channel_seeded', true);
 }
 
+// 这些渠道是后来新增的。用一次性 setting 补齐已有数据库，
+// 之后用户手动删除也不会在每次启动时被重新创建。
+function ensureExtraChannels(): void {
+  if (getSetting<boolean>('extra_channels_seeded_v2')) return;
+  const seeds: Array<{
+    id: string;
+    name: string;
+    type: ChannelType;
+    baseUrl: string;
+    enabled: boolean;
+    priority: number;
+    config: Record<string, unknown>;
+    skip?: boolean;
+  }> = [
+    {
+      id: 'pansou-tg-quark',
+      name: 'Telegram 夸克频道（PanSou）',
+      type: 'pansou',
+      baseUrl: config.pansouBaseUrl,
+      enabled: true,
+      priority: 16,
+      config: {
+        src: 'tg',
+        channels: [
+          'Quark_Movies',
+          'Quark_Share_Channel',
+          'quarkshare',
+          'kuakeyun',
+          'ypquark',
+          'NewQuark',
+          'ucquark',
+          'xx123pan',
+          'yunpanquark',
+          'QuarkFree',
+          'quark_res',
+          'kuakedongman',
+        ],
+        onlyCloudTypes: ['quark'],
+        timeoutMs: 20000,
+      },
+    },
+    {
+      id: 'pansou-qqpd',
+      name: '腾讯 QQ 频道（PanSou QQPD）',
+      type: 'pansou',
+      baseUrl: config.pansouBaseUrl,
+      enabled: true,
+      priority: 17,
+      config: {
+        src: 'plugin',
+        plugins: ['qqpd'],
+        onlyCloudTypes: ['quark'],
+        timeoutMs: 20000,
+      },
+    },
+    {
+      id: 'l9-default',
+      name: 'L9 网盘搜索',
+      type: 'http',
+      baseUrl: config.l9BaseUrl,
+      enabled: true,
+      priority: 30,
+      skip: !config.enableL9,
+      config: {
+        search: {
+          method: 'GET',
+          url: '/api/search?q={queryEncoded}&page=1&page_size=50',
+        },
+        itemsPath: 'data.resources',
+        fields: {
+          title: 'title',
+          url: 'url',
+          note: 'description',
+          datetime: 'created_at',
+        },
+        maxResults: 50,
+        timeoutMs: 12000,
+      },
+    },
+    {
+      id: 'yunso-default',
+      name: '小云搜索（YunSo）',
+      type: 'yunso',
+      baseUrl: config.yunsoBaseUrl,
+      enabled: true,
+      priority: 31,
+      skip: !config.enableYunso,
+      config: { maxResults: 60, timeoutMs: 12000 },
+    },
+    {
+      id: 'panws-default',
+      name: '盘万搜（PanWS）',
+      type: 'panws',
+      baseUrl: config.panwsBaseUrl,
+      enabled: true,
+      priority: 32,
+      skip: !config.enablePanws,
+      config: { maxResults: 40, timeoutMs: 12000 },
+    },
+    {
+      id: 'quarkpanso-default',
+      name: 'QuarkPanSo',
+      type: 'quarkpanso',
+      baseUrl: config.quarkpansoBaseUrl,
+      enabled: true,
+      priority: 33,
+      skip: !config.enableQuarkPanSo,
+      config: { size: 15, timeoutMs: 15000, minIntervalMs: 60000 },
+    },
+  ];
+  for (const seed of seeds) {
+    if (seed.skip || getChannel(seed.id)) continue;
+    const { skip: _skip, ...input } = seed;
+    createChannel(input);
+  }
+  setSetting('extra_channels_seeded_v2', true);
+}
+
 export function seedDefaults(): void {
   if (getSetting<boolean>('channels_seeded')) {
     ensureMobileChannel();
+    ensureExtraChannels();
     return;
   }
 
@@ -826,6 +945,7 @@ export function seedDefaults(): void {
     });
   }
   ensureMobileChannel();
+  ensureExtraChannels();
   setSetting('channels_seeded', true);
 }
 

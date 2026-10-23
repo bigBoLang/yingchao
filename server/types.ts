@@ -55,7 +55,13 @@ export interface CollectionSection {
   items: Subject[];
 }
 
-export type ChannelType = 'pansou' | 'zhuyun' | 'http';
+export type ChannelType =
+  | 'pansou'
+  | 'zhuyun'
+  | 'http'
+  | 'quarkpanso'
+  | 'yunso'
+  | 'panws';
 
 export interface Channel {
   id: string;

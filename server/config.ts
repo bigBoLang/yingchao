@@ -45,6 +45,17 @@ export const config = {
   pansouBin: process.env.PANSOU_BIN || '',
   zhuyunBaseUrl: (process.env.ZHUYUN_BASE_URL || 'https://pan.zhuyunso.top').replace(/\/$/, ''),
   enableZhuyun: process.env.ENABLE_ZHUYUN !== 'false',
+  l9BaseUrl: (process.env.L9_BASE_URL || 'https://pan.l9.lc').replace(/\/$/, ''),
+  enableL9: process.env.ENABLE_L9 !== 'false',
+  yunsoBaseUrl: (process.env.YUNSO_BASE_URL || 'https://www.yunso.net').replace(/\/$/, ''),
+  enableYunso: process.env.ENABLE_YUNSO !== 'false',
+  panwsBaseUrl: (process.env.PANWS_BASE_URL || 'https://panws.net').replace(/\/$/, ''),
+  enablePanws: process.env.ENABLE_PANWS !== 'false',
+  quarkpansoBaseUrl: (process.env.QUARKPANSO_BASE_URL || 'https://www.quarkpanso.com').replace(
+    /\/$/,
+    '',
+  ),
+  enableQuarkPanSo: process.env.ENABLE_QUARKPANSO !== 'false',
   quarkCookie: process.env.QUARK_COOKIE || '',
   searchCacheHours: num(process.env.SEARCH_CACHE_HOURS, 12),
   metadataCacheHours: num(process.env.METADATA_CACHE_HOURS, 24),
@@ -55,6 +66,11 @@ export const config = {
   validateBatch: num(process.env.VALIDATE_BATCH, 60),
   schedulerEnabled: process.env.SCHEDULER_ENABLED !== 'false',
   appSecret: process.env.APP_SECRET || '',
+  // 可选访问密码：同时配置用户名和密码才会启用 HTTP Basic 鉴权
+  authUser: process.env.AUTH_USER || '',
+  authPass: process.env.AUTH_PASS || '',
+  // 允许自定义渠道/直链访问内网地址（默认关闭，避免被用来探测内网）
+  allowPrivateHosts: process.env.ALLOW_PRIVATE_HOSTS === 'true',
   nodeEnv: process.env.NODE_ENV || 'development',
   // 播放代理模式：'tunnel'=走 Cloudflare Tunnel 域名，'direct'=直连 IP
   playProxyMode: (process.env.PLAY_PROXY_MODE as 'tunnel' | 'direct') || 'tunnel',

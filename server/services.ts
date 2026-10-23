@@ -117,7 +117,8 @@ async function spawnPansou(bin: string, host: string, port: number): Promise<voi
     }
   }
   // 和原来的 start.sh 保持一致，只启用常用插件；用户显式配置时以用户的为准。
-  env.ENABLED_PLUGINS ||= 'pansearch,quarksoo,yunso,sousou';
+  // qqpd 用于腾讯 QQ 频道，需要用户先在 /qqpd/<hash> 扫码登录并配置频道。
+  env.ENABLED_PLUGINS ||= 'pansearch,quarksoo,yunso,sousou,qqpd';
 
   try {
     const proc = spawn(bin, [], {

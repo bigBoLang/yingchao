@@ -13,9 +13,10 @@ export function VideoPlayer({
   const isHls = format === 'hls' || /\.m3u8(\?|$)/i.test(src);
 
   useEffect(() => {
+    // 先清错误：否则出错后 <video> 被隐藏，ref 取不到，换新地址也永远无法重试。
+    setError('');
     const video = videoRef.current;
     if (!video || !src) return;
-    setError('');
 
     if (!isHls) {
       video.src = src;
@@ -65,29 +66,29 @@ export function VideoPlayer({
     };
   }, [src, format]);
 
-  if (error) {
-    return (
-      <div className="player-placeholder player-hls-error">
-        <p>{error}</p>
-        <span>播放列表或分片链接可能已过期，关闭后重新点击解析播放即可。</span>
-      </div>
-    );
-  }
-
   return (
-    <video
-      ref={videoRef}
-      className="video-player"
-      controls
-      playsInline
-      preload="metadata"
-      onError={() =>
-        setError(
-          isHls
-            ? '视频流加载失败，链接可能已过期，关闭后重新解析即可。'
-            : '浏览器无法播放这个视频（原画常见 MKV / H.265），请用下方的 IINA / VLC 打开。',
-        )
-      }
-    />
+    <>
+      <video
+        ref={videoRef}
+        className="video-player"
+        style={error ? { display: 'none' } : undefined}
+        controls
+        playsInline
+        preload="metadata"
+        onError={() =>
+          setError(
+            isHls
+              ? '视频流加载失败，链接可能已过期，关闭后重新解析即可。'
+              : '浏览器无法播放这个视频（原画常见 MKV / H.265），请用下方的 IINA / VLC 打开。',
+          )
+        }
+      />
+      {error && (
+        <div className="player-placeholder player-hls-error">
+          <p>{error}</p>
+          <span>播放列表或分片链接可能已过期，关闭后重新点击解析播放即可。</span>
+        </div>
+      )}
+    </>
   );
 }

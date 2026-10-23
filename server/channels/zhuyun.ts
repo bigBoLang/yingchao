@@ -26,11 +26,21 @@ const ZHUYUN_TYPE_MAP: Record<number, CloudType> = {
 interface ZhuyunItem {
   title?: string;
   url?: string;
+  desc?: string;
   is_type?: number | string;
   sid?: number | string;
   datetime?: string;
   pantype?: string;
+  source?: string;
   is_local?: boolean;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function cloudTypeFor(item: ZhuyunItem): CloudType {
+  return ZHUYUN_TYPE_MAP[Number(item.is_type)] || 'other';
 }
 
 async function getBrowserCookie(baseUrl: string): Promise<string> {
@@ -55,13 +65,14 @@ async function getBrowserCookie(baseUrl: string): Promise<string> {
   }
 }
 
-async function decodeLink(
+async function decodeLinkOnce(
   baseUrl: string,
   cookie: string,
   item: ZhuyunItem,
-): Promise<string> {
+  signal: AbortSignal,
+): Promise<{ url: string; retry: boolean }> {
   const rawUrl = String(item.url || '');
-  if (/^https?:|^magnet:|^ed2k:/i.test(rawUrl)) return rawUrl;
+  if (/^https?:|^magnet:|^ed2k:/i.test(rawUrl)) return { url: rawUrl, retry: false };
   try {
     const response = await smartFetch(`${baseUrl}/api/other/save_url`, {
       method: 'POST',
@@ -76,18 +87,77 @@ async function decodeLink(
         title: item.title || '',
         sid: item.sid,
       }),
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]),
     });
-    if (!response.ok) return '';
+    if (!response.ok) {
+      return {
+        url: '',
+        retry: response.status === 429 || response.status >= 500,
+      };
+    }
     const body = (await response.json()) as {
       code?: number;
       data?: { url?: string; need_captcha?: boolean; need_refresh?: boolean };
       message?: string;
     };
     // 实测即使 need_captcha=true，也会先返回真实分享链接；拿不到就跳过。
-    return body.data?.url || '';
+    if (body.data?.url) return { url: body.data.url, retry: false };
+    const message = String(body.message || '');
+    const retry =
+      body.code === 500 || /速度过快|稍后|频繁|timeout|超时/i.test(message);
+    return { url: '', retry };
   } catch {
-    return '';
+    return { url: '', retry: !signal.aborted };
+  }
+}
+
+async function decodeLinkWithRetry(
+  baseUrl: string,
+  cookie: string,
+  item: ZhuyunItem,
+  signal: AbortSignal,
+): Promise<string> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const result = await decodeLinkOnce(baseUrl, cookie, item, signal);
+    if (result.url) return result.url;
+    if (!result.retry || signal.aborted || attempt === 2) return '';
+    // 公共节点对并发很敏感，串行退避比一次性并发成功率高。
+    await sleep(420 * (attempt + 1) + Math.random() * 260);
+  }
+  return '';
+}
+
+async function fetchLocalItems(
+  baseUrl: string,
+  query: SearchQuery,
+  signal: AbortSignal,
+): Promise<ZhuyunItem[]> {
+  const params = new URLSearchParams({ title: query.title });
+  if (query.cloudType && query.cloudType !== 'all') {
+    const entry = Object.entries(ZHUYUN_TYPE_MAP).find(([, type]) => type === query.cloudType);
+    if (entry) params.set('is_type', entry[0]);
+  }
+  try {
+    const response = await smartFetch(
+      `${baseUrl}/api/other/local_search_check?${params.toString()}`,
+      {
+        headers: {
+          Accept: 'application/json',
+          'User-Agent': config.userAgent,
+          Referer: `${baseUrl}/`,
+        },
+        signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]),
+      },
+    );
+    if (!response.ok) return [];
+    const body = (await response.json()) as {
+      data?: { hasData?: boolean; items?: ZhuyunItem[] };
+    };
+    const items = Array.isArray(body.data?.items) ? body.data!.items! : [];
+    return items.filter((item) => Boolean(item?.title && item?.url));
+  } catch {
+    // 本地资源接口不可用时继续走 web_search。
+    return [];
   }
 }
 
@@ -97,6 +167,7 @@ async function readSse(
   cookie: string,
   signal: AbortSignal,
   timeoutMs: number,
+  maxItems = Number.POSITIVE_INFINITY,
 ): Promise<ZhuyunItem[]> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -158,10 +229,15 @@ async function readSse(
             const item = JSON.parse(data) as ZhuyunItem & { error?: string };
             if (item?.error) continue;
             if (item?.title && item?.url) items.push(item);
+            if (items.length >= maxItems) {
+              doneSeen = true;
+              break;
+            }
           } catch {
             // 非 JSON 的状态行（如“线路：xxx”）忽略
           }
         }
+        if (doneSeen) break;
       }
       if (doneSeen) break;
     }
@@ -190,61 +266,99 @@ export async function searchZhuyun(
 ): Promise<NormalizedLink[]> {
   const baseUrl = (channel.baseUrl || config.zhuyunBaseUrl).replace(/\/$/, '');
   if (!baseUrl) throw new Error('未配置竹云盘搜地址');
-  const maxDecode = Math.max(
-    5,
-    Math.min(60, Number(channel.config.maxDecode || 20)),
-  );
-  const cookie = await getBrowserCookie(baseUrl);
+  const maxDecode = Math.max(4, Math.min(12, Number(channel.config.maxDecode || 6)));
+  const timeoutMs = Math.max(3000, Math.min(8000, Number(channel.config.timeoutMs || 5000)));
 
+  // local_search_check 返回的是已经解好的直链，通常也是质量最高的一批；
+  // web_search 的结果需要再调用 save_url 解码，容易触发公共节点频控。
+  // web_search 本身不依赖浏览器 token，token 只用于后续解码，因此并行获取。
+  const localPromise = fetchLocalItems(baseUrl, query, signal);
+  const cookiePromise = getBrowserCookie(baseUrl);
   const params = new URLSearchParams({ title: query.title, from: 'web' });
   if (query.cloudType && query.cloudType !== 'all') {
     const entry = Object.entries(ZHUYUN_TYPE_MAP).find(([, type]) => type === query.cloudType);
     if (entry) params.set('is_type', entry[0]);
   }
-  const items = await readSse(
+  const webPromise = readSse(
     `${baseUrl}/api/other/web_search?${params.toString()}`,
     baseUrl,
-    cookie,
+    '',
     signal,
-    Number(channel.config.timeoutMs || 6500),
-  );
+    timeoutMs,
+    Math.max(8, maxDecode * 2),
+  ).catch(() => [] as ZhuyunItem[]);
 
-  // 先按标题相关度排序，再解码最相关的一批，避免对第三方造成太大压力。
-  const ranked = items
-    .map((item) => ({ item, score: titleMatchScore(query.title, item.title || '') }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, maxDecode);
+  const [localItems, webItems, cookie] = await Promise.all([
+    localPromise,
+    webPromise,
+    cookiePromise,
+  ]);
 
-  const decoded = await mapLimit(ranked, 4, async ({ item, score }) => {
-    const realUrl = await decodeLink(baseUrl, cookie, item);
+  const links: NormalizedLink[] = [];
+  const seen = new Set<string>();
+  const push = (link: NormalizedLink | null): void => {
+    if (!link) return;
+    if (query.cloudType && query.cloudType !== 'all' && link.cloudType !== query.cloudType) {
+      return;
+    }
+    const key = urlKeyFor(link.url, link.password);
+    if (seen.has(key)) return;
+    seen.add(key);
+    links.push(link);
+  };
+
+  for (const item of localItems) {
+    const title = item.title || query.title;
+    const score = titleMatchScore(query.title, title);
+    push(
+      normalizeLink({
+        title,
+        url: item.url || '',
+        cloudType: cloudTypeFor(item),
+        note: item.desc || item.pantype || item.source || '',
+        datetime: item.datetime || '',
+        channelId: channel.id,
+        channelName: channel.name,
+        raw: { ...item, matchScore: score, source: 'local' },
+      }),
+    );
+  }
+
+  // 先按标题相关度排序，再串行/小并发解码最相关的一批，避免对第三方造成太大压力。
+  const remaining = Math.max(0, maxDecode - links.length);
+  const ranked = remaining
+    ? webItems
+        .map((item) => ({ item, score: titleMatchScore(query.title, item.title || '') }))
+        .sort((a, b) => b.score - a.score)
+        .slice(0, remaining)
+    : [];
+  const deadline = Date.now() + Math.max(2500, timeoutMs - 1200);
+  const decoded = await mapLimit(ranked, 2, async ({ item, score }) => {
+    if (signal.aborted || Date.now() >= deadline) return null;
+    const realUrl = await decodeLinkWithRetry(baseUrl, cookie, item, signal);
     if (!realUrl) return null;
-    const cloud = normalizeCloudType(ZHUYUN_TYPE_MAP[Number(item.is_type)]);
+    const title = item.title || query.title;
     const normalized = normalizeLink({
-      title: item.title || query.title,
+      title,
       url: realUrl,
-      cloudType: cloud,
+      cloudType: cloudTypeFor(item),
       note: item.pantype || '',
       datetime: item.datetime || '',
       channelId: channel.id,
       channelName: channel.name,
-      raw: { ...item, matchScore: score },
+      raw: { ...item, matchScore: score, source: 'web' },
     });
     if (!normalized) return null;
     (normalized.raw as Record<string, unknown>).matchScore = score;
     return normalized;
   });
+  for (const link of decoded) push(link);
 
-  const seen = new Set<string>();
-  return decoded
-    .filter((link): link is NormalizedLink => Boolean(link))
-    .filter((link) => {
-      if (query.cloudType && query.cloudType !== 'all' && link.cloudType !== query.cloudType) {
-        return false;
-      }
-      const key = urlKeyFor(link.url, link.password);
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
+  return links
+    .sort((a, b) => {
+      const scoreA = Number((a.raw as { matchScore?: number } | undefined)?.matchScore || 0);
+      const scoreB = Number((b.raw as { matchScore?: number } | undefined)?.matchScore || 0);
+      return scoreB - scoreA;
     })
     .slice(0, query.maxResults || 60);
 }

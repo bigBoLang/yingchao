@@ -1,8 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { Readable, Transform } from 'node:stream';
+import { Agent, fetch as undiciFetch } from 'undici';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { config } from './config.js';
+import { assertPublicUrl } from './net-guard.js';
 import { isSameNetwork, lanUrls } from './lan.js';
 import {
   createChannel,
@@ -121,6 +123,9 @@ function countPlayBytes(stream: Readable, token: string): Readable {
   });
   return stream.pipe(counter);
 }
+
+// 图片代理的直连连接池：豆瓣图片数量多，复用 keep-alive 连接比每次新建 Agent 快很多。
+const imageAgent = new Agent({ keepAliveTimeout: 30_000 });
 
 function maskCookie(cookie: string): string {
   if (!cookie) return '';
@@ -364,9 +369,11 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       reply.code(400);
       return { error: '请填写渠道名称' };
     }
-    if (!['pansou', 'zhuyun', 'http'].includes(body.type || '')) {
+    if (
+      !['pansou', 'zhuyun', 'http', 'quarkpanso', 'yunso', 'panws'].includes(body.type || '')
+    ) {
       reply.code(400);
-      return { error: '渠道类型必须是 pansou、zhuyun 或 http' };
+      return { error: '渠道类型必须是 pansou、zhuyun、http、quarkpanso、yunso 或 panws' };
     }
     const channel = createChannel({
       name: body.name.trim(),
@@ -394,9 +401,12 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       reply.code(404);
       return { error: '渠道不存在' };
     }
-    if (body.type != null && !['pansou', 'zhuyun', 'http'].includes(body.type)) {
+    if (
+      body.type != null &&
+      !['pansou', 'zhuyun', 'http', 'quarkpanso', 'yunso', 'panws'].includes(body.type)
+    ) {
       reply.code(400);
-      return { error: '渠道类型必须是 pansou、zhuyun 或 http' };
+      return { error: '渠道类型必须是 pansou、zhuyun、http、quarkpanso、yunso 或 panws' };
     }
     let configPatch = body.config;
     if (configPatch) {
@@ -608,6 +618,14 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
         /^https?:\/\//i.test(resource.url) &&
         /\.(mp4|mkv|mov|m4v|webm|ts|flv|avi|m3u8)(\?|$)/i.test(resource.url)
       ) {
+        if (!config.allowPrivateHosts) {
+          try {
+            await assertPublicUrl(resource.url);
+          } catch (error) {
+            reply.code(400);
+            return { error: errorMessage(error) };
+          }
+        }
         return {
           shareId: '',
           files: [
@@ -768,28 +786,28 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       return { error: '只允许代理豆瓣图片' };
     }
     try {
-      const { fetch, Agent } = await import('undici');
-      // 创建一个不使用代理的 Agent
-      const noProxyAgent = new Agent();
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 12000);
-      const upstream = await fetch(target, {
-        headers: {
-          'User-Agent': config.userAgent,
-          Referer: 'https://movie.douban.com/',
-          Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
-        },
-        signal: controller.signal,
-        dispatcher: noProxyAgent,
-      });
-      clearTimeout(timeout);
-      if (!upstream.ok || !upstream.body) {
-        reply.code(upstream.status || 502);
-        return { error: '图片加载失败' };
+      try {
+        const upstream = await undiciFetch(target, {
+          headers: {
+            'User-Agent': config.userAgent,
+            Referer: 'https://movie.douban.com/',
+            Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+          },
+          signal: controller.signal,
+          dispatcher: imageAgent,
+        });
+        if (!upstream.ok || !upstream.body) {
+          reply.code(upstream.status || 502);
+          return { error: '图片加载失败' };
+        }
+        reply.header('Content-Type', upstream.headers.get('content-type') || 'image/jpeg');
+        reply.header('Cache-Control', 'public, max-age=604800, immutable');
+        return reply.send(Readable.fromWeb(upstream.body as never));
+      } finally {
+        clearTimeout(timeout);
       }
-      reply.header('Content-Type', upstream.headers.get('content-type') || 'image/jpeg');
-      reply.header('Cache-Control', 'public, max-age=604800, immutable');
-      return reply.send(Readable.fromWeb(upstream.body as never));
     } catch (error) {
       reply.code(502);
       return { error: errorMessage(error) };
