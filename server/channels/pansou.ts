@@ -177,6 +177,7 @@ export async function testPansou(channel: Channel): Promise<{
   const onlyCloudTypes = Array.isArray(channel.config.onlyCloudTypes)
     ? channel.config.onlyCloudTypes
     : [];
+  const plugins = Array.isArray(channel.config.plugins) ? channel.config.plugins : [];
   const testCloudType = String(
     channel.config.testCloudType || onlyCloudTypes[0] || 'quark',
   ) as CloudType;
@@ -189,9 +190,14 @@ export async function testPansou(channel: Channel): Promise<{
     channel,
     controller.signal,
   );
+  const needsQqLogin = !links.length && plugins.includes('qqpd');
   return {
     count: links.length,
     ms: Date.now() - started,
-    message: links.length ? '连接正常' : '连接成功，但没有返回结果（可检查插件/频道配置）',
+    message: needsQqLogin
+      ? 'QQ 频道未登录或未配置频道：先在 PanSou 管理页 /qqpd/<QQ号> 扫码，并添加频道 kq33c85gjl'
+      : links.length
+        ? '连接正常'
+        : '连接成功，但没有返回结果（可检查插件/频道配置）',
   };
 }

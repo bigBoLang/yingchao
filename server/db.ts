@@ -1039,6 +1039,29 @@ function ensureMobileChannel(): void {
   setSetting('mobile_channel_seeded', true);
 }
 
+// QQ 频道是目前除 TG 之外少数稳定产出移动云盘（139）链接的来源。
+// 需要先在 PanSou 的 /qqpd 管理页扫码登录并添加频道，否则该渠道会返回 0 条。
+function ensureQqpdMobileChannel(): void {
+  if (getSetting<boolean>('qqpd_mobile_channel_seeded')) return;
+  if (!getChannel('pansou-qqpd-mobile')) {
+    createChannel({
+      id: 'pansou-qqpd-mobile',
+      name: '移动云盘（QQ 频道）',
+      type: 'pansou',
+      baseUrl: config.pansouBaseUrl,
+      enabled: true,
+      priority: 14,
+      config: {
+        src: 'plugin',
+        plugins: ['qqpd'],
+        onlyCloudTypes: ['mobile'],
+        timeoutMs: 20000,
+      },
+    });
+  }
+  setSetting('qqpd_mobile_channel_seeded', true);
+}
+
 // 这些渠道是后来新增的。用一次性 setting 补齐已有数据库，
 // 之后用户手动删除也不会在每次启动时被重新创建。
 function ensureExtraChannels(): void {
@@ -1160,6 +1183,7 @@ function ensureExtraChannels(): void {
 export function seedDefaults(): void {
   if (getSetting<boolean>('channels_seeded')) {
     ensureMobileChannel();
+    ensureQqpdMobileChannel();
     ensureExtraChannels();
     return;
   }
@@ -1213,6 +1237,7 @@ export function seedDefaults(): void {
     });
   }
   ensureMobileChannel();
+  ensureQqpdMobileChannel();
   ensureExtraChannels();
   setSetting('channels_seeded', true);
 }
