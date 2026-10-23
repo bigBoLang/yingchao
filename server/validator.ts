@@ -1,6 +1,7 @@
 import { config } from './config.js';
 import { smartFetch } from './direct-fetch.js';
 import {
+  listHistoryStaleResources,
   listStaleResources,
   now,
   updateResourceCheck,
@@ -92,7 +93,19 @@ export async function validateStaleResources(limit: number, staleHours: number):
   locked: number;
   unknown: number;
 }> {
-  const stale = listStaleResources(limit, now() - Math.max(1, staleHours) * 3600);
+  const checkedBefore = now() - Math.max(1, staleHours) * 3600;
+  // 先巡检播放记录相关的资源，剩余额度再给普通资源。
+  const historyLimit = Math.min(limit, 20);
+  const prioritized = listHistoryStaleResources(historyLimit, checkedBefore);
+  const prioritizedIds = new Set(prioritized.map((resource) => resource.id));
+  const remaining = limit - prioritized.length;
+  const ordinary =
+    remaining > 0
+      ? listStaleResources(remaining, checkedBefore).filter(
+          (resource) => !prioritizedIds.has(resource.id),
+        )
+      : [];
+  const stale = [...prioritized, ...ordinary];
   if (!stale.length) {
     return { checked: 0, valid: 0, invalid: 0, locked: 0, unknown: 0 };
   }

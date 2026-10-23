@@ -3598,3 +3598,162 @@ h2 {
     display: none;
   }
 }
+
+/* ---------- Play history ---------- */
+
+.history-rail {
+  padding-top: 2px;
+}
+
+.history-card {
+  position: relative;
+  flex: 0 0 160px;
+  scroll-snap-align: start;
+}
+
+.history-poster {
+  position: relative;
+  display: block;
+  aspect-ratio: 2 / 3;
+  border-radius: 13px;
+  overflow: hidden;
+  background: var(--panel-2);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.32);
+}
+
+.history-poster-img,
+.history-poster .poster-fallback {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.45s ease, filter 0.3s ease;
+}
+
+.history-poster:hover .history-poster-img,
+.history-poster:hover .poster-fallback {
+  transform: scale(1.05);
+  filter: brightness(0.75);
+}
+
+.history-play {
+  position: absolute;
+  right: 9px;
+  bottom: 14px;
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+  background: rgba(10, 11, 14, 0.72);
+  color: var(--text);
+  backdrop-filter: blur(6px);
+}
+
+.history-progress {
+  position: absolute;
+  left: 9px;
+  right: 9px;
+  bottom: 7px;
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.22);
+  overflow: hidden;
+}
+
+.history-progress > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.history-meta {
+  margin-top: 9px;
+  padding-right: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.history-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history-title:hover {
+  color: var(--accent);
+}
+
+.history-sub {
+  font-size: 11px;
+  color: var(--faint);
+}
+
+.history-remove {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: rgba(10, 11, 14, 0.66);
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: 0.16s ease;
+}
+
+.history-card:hover .history-remove,
+.history-remove:focus-visible {
+  opacity: 1;
+}
+
+.history-remove:hover {
+  color: var(--text);
+  border-color: var(--line-strong);
+}
+
+@media (max-width: 640px) {
+  .history-card {
+    flex-basis: 132px;
+  }
+}
+
+/* ---------- Quark drive space ---------- */
+
+.space-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+
+.space-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+
+.space-bar > span.warn {
+  background: #f08c3a;
+}
+
+.settings-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--faint);
+}

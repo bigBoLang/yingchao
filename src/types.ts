@@ -197,7 +197,22 @@ export interface RuntimeSettings {
   validateHours: number;
   hotRefreshHours: number;
   hotRefreshLimit: number;
+  historyRefreshHours: number;
   schedulerEnabled: boolean;
+}
+
+export interface QuarkSpaceResponse {
+  space: {
+    total: number;
+    used: number;
+    free: number;
+    ratio: number;
+    totalText: string;
+    usedText: string;
+    freeText: string;
+    percent: number;
+  };
+  threshold: number;
 }
 
 export interface Job {
@@ -218,6 +233,21 @@ export interface AdminOverview {
   runtime: RuntimeSettings;
   quarkCookieSet: boolean;
   serverTime: number;
+}
+
+export interface PlayHistoryItem {
+  id: number;
+  subjectId: string;
+  title: string;
+  poster: string;
+  resourceId: string;
+  resourceTitle: string;
+  position: number;
+  duration: number;
+  completed: boolean;
+  resourceStatus: string;
+  resourceCheckedAt: number;
+  updatedAt: number;
 }
 
 export interface QuarkFile {

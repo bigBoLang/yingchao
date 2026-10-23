@@ -238,7 +238,12 @@ export function DetailPage() {
       </div>
 
       {player ? (
-        <PlayerModal resource={player.resource} files={player.files} onClose={() => setPlayer(null)} />
+        <PlayerModal
+          resource={player.resource}
+          files={player.files}
+          subject={subject ? { id: subject.id, title: subject.title, poster: subject.poster } : undefined}
+          onClose={() => setPlayer(null)}
+        />
       ) : null}
     </div>
   );

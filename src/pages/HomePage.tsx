@@ -13,6 +13,7 @@ import type { HomeResponse } from '../types';
 import { api } from '../api';
 import { useApi } from '../hooks/useApi';
 import { Hero } from '../components/Hero';
+import { HistoryRow } from '../components/HistoryRow';
 import { SectionRow } from '../components/SectionRow';
 import { CardSkeleton, EmptyState } from '../components/EmptyState';
 import { formatCount } from '../lib/format';
@@ -115,6 +116,8 @@ export function HomePage() {
             <ArrowRight size={15} />
           </Link>
         </section>
+
+        <HistoryRow />
 
         {data.sections.map((section, index) => (
           <SectionRow key={section.key} section={section} index={index} />

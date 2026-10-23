@@ -71,6 +71,12 @@ export const config = {
   authPass: process.env.AUTH_PASS || '',
   // 允许自定义渠道/直链访问内网地址（默认关闭，避免被用来探测内网）
   allowPrivateHosts: process.env.ALLOW_PRIVATE_HOSTS === 'true',
+  // 播放记录相关影片的资源缓存与巡检
+  historyRefreshHours: Number(process.env.HISTORY_REFRESH_HOURS || 6),
+  historyRefreshLimit: Number(process.env.HISTORY_REFRESH_LIMIT || 8),
+  // 夸克网盘占用达到阈值后，只清理《影巢播放缓存》目录里的旧文件
+  quarkSpaceThreshold: Number(process.env.QUARK_SPACE_THRESHOLD || 0.7),
+  quarkSpaceTarget: Number(process.env.QUARK_SPACE_TARGET || 0.6),
   nodeEnv: process.env.NODE_ENV || 'development',
   // 播放代理模式：'tunnel'=走 Cloudflare Tunnel 域名，'direct'=直连 IP
   playProxyMode: (process.env.PLAY_PROXY_MODE as 'tunnel' | 'direct') || 'tunnel',

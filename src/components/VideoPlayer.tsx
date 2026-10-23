@@ -4,11 +4,16 @@ import { useEffect, useRef, useState } from 'react';
 export function VideoPlayer({
   src,
   format,
+  onProgress,
 }: {
   src: string;
   format?: 'hls' | 'video';
+  /** 播放进度回调，用于记录播放历史（每 5 秒最多一次，暂停/播完时补一次） */
+  onProgress?: (position: number, duration: number) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const progressRef = useRef(onProgress);
+  progressRef.current = onProgress;
   const [error, setError] = useState('');
   const isHls = format === 'hls' || /\.m3u8(\?|$)/i.test(src);
 
@@ -65,6 +70,30 @@ export function VideoPlayer({
       hls?.destroy();
     };
   }, [src, format]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    let last = 0;
+    const report = (force: boolean) => {
+      if (!Number.isFinite(video.duration) || video.duration <= 0) return;
+      const timestamp = Date.now();
+      if (!force && timestamp - last < 5000) return;
+      last = timestamp;
+      progressRef.current?.(video.currentTime, video.duration);
+    };
+    const handleTimeUpdate = () => report(false);
+    const handlePause = () => report(true);
+    const handleEnded = () => report(true);
+    video.addEventListener('timeupdate', handleTimeUpdate);
+    video.addEventListener('pause', handlePause);
+    video.addEventListener('ended', handleEnded);
+    return () => {
+      video.removeEventListener('timeupdate', handleTimeUpdate);
+      video.removeEventListener('pause', handlePause);
+      video.removeEventListener('ended', handleEnded);
+    };
+  }, []);
 
   return (
     <>

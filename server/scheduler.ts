@@ -5,6 +5,7 @@ import {
   getStats,
   getTopHotSubjects,
   listChannels,
+  listHistorySubjects,
   listJobs,
   now,
   startJob,
@@ -13,7 +14,7 @@ import { refreshAllCollections } from './douban.js';
 import { searchSubjectResources } from './services/search.js';
 import { validateStaleResources } from './validator.js';
 
-type JobName = 'collections' | 'hot-resources' | 'validate';
+type JobName = 'collections' | 'hot-resources' | 'history-resources' | 'validate';
 const running = new Set<JobName>();
 
 function lastFinished(name: JobName): number {
@@ -107,6 +108,51 @@ export async function runHotResourcesJob(): Promise<{
   };
 }
 
+export async function runHistoryResourcesJob(): Promise<{
+  skipped?: boolean;
+  error?: string;
+  refreshed?: number;
+  resources?: number;
+}> {
+  const channels = listChannels(true);
+  const hasHealthyChannel = channels.some(
+    (channel) => channel.lastOkAt && now() - channel.lastOkAt < 7 * 86400,
+  );
+  if (!hasHealthyChannel) {
+    return {
+      skipped: true,
+      error: '还没有成功使用过的渠道，先完成一次手动检索后再启用播放记录缓存',
+    };
+  }
+  const subjects = listHistorySubjects(Math.max(1, config.historyRefreshLimit));
+  if (!subjects.length) return { skipped: true };
+
+  let refreshed = 0;
+  let resources = 0;
+  const outcome = await withJob('history-resources', async () => {
+    for (const subject of subjects) {
+      try {
+        const result = await searchSubjectResources(subject, {
+          force: true,
+          cloudType: 'quark',
+        });
+        refreshed++;
+        resources += result.resources.length;
+      } catch (error) {
+        console.error(`[job] 刷新播放记录《${subject.title}》资源失败：`, error);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 800));
+    }
+    return { subjects: subjects.length, refreshed, resources };
+  });
+  return {
+    skipped: outcome.skipped,
+    error: outcome.error,
+    refreshed,
+    resources,
+  };
+}
+
 export async function runValidateJob(): Promise<{
   skipped?: boolean;
   error?: string;
@@ -131,6 +177,7 @@ export async function runJob(
 ): Promise<{ skipped?: boolean; error?: string; [key: string]: unknown }> {
   if (name === 'collections') return runCollectionsJob();
   if (name === 'hot-resources') return runHotResourcesJob();
+  if (name === 'history-resources') return runHistoryResourcesJob();
   if (name === 'validate') return runValidateJob();
   throw new Error(`未知任务：${name}`);
 }
@@ -145,6 +192,9 @@ async function tick(): Promise<void> {
   }
   if (getStats().subjects > 0 && due('hot-resources', runtime.hotRefreshHours)) {
     await runHotResourcesJob();
+  }
+  if (stats.subjects > 0 && due('history-resources', runtime.historyRefreshHours)) {
+    await runHistoryResourcesJob();
   }
   if (stats.resources > 0 && due('validate', runtime.validateHours)) {
     await runValidateJob();

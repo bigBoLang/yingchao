@@ -182,6 +182,8 @@ interface QuarkDriveItem {
   file_name?: string;
   dir?: boolean;
   size?: number;
+  created_at?: number;
+  updated_at?: number;
 }
 
 async function listDriveFolder(pdirFid: string, cookie: string): Promise<QuarkDriveItem[]> {
@@ -238,6 +240,156 @@ async function ensureSaveFolder(cookie: string): Promise<string> {
   const folder = again.find((item) => item.dir && item.file_name === QUARK_SAVE_FOLDER);
   if (folder?.fid) return String(folder.fid);
   throw new Error(body.message || '无法创建夸克转存目录');
+}
+
+export interface QuarkSpaceInfo {
+  /** 总容量（字节） */
+  total: number;
+  used: number;
+  free: number;
+  /** 已使用比例 0~1 */
+  ratio: number;
+}
+
+function pickNumber(source: Record<string, unknown>, keys: string[]): number {
+  for (const key of keys) {
+    const value = Number(source[key]);
+    if (Number.isFinite(value) && value > 0) return value;
+  }
+  return 0;
+}
+
+/** 查询夸克网盘容量。拿不到容量时返回 null，此时不做任何清理动作。 */
+export async function getQuarkSpace(cookie = getQuarkCookie()): Promise<QuarkSpaceInfo | null> {
+  if (!cookie) return null;
+  const endpoints = [
+    `${QUARK_API}/member?pr=ucpro&fr=pc&uc_param_str=`,
+    `${QUARK_API}/capacity?pr=ucpro&fr=pc&uc_param_str=`,
+  ];
+  for (const endpoint of endpoints) {
+    try {
+      const response = await fetch(endpoint, {
+        headers: quarkHeaders(cookie),
+        signal: AbortSignal.timeout(15000),
+      });
+      const body = (await response.json()) as {
+        code?: number;
+        data?: Record<string, unknown>;
+      };
+      if (Number(body.code) !== 0 || !body.data) continue;
+      const data = body.data;
+      const member = (data.member_info || {}) as Record<string, unknown>;
+      const total = pickNumber(member, ['capacity']) || pickNumber(data, [
+        'capacity',
+        'total_capacity',
+        'total',
+      ]);
+      const used =
+        pickNumber(member, ['use_capacity']) ||
+        pickNumber(data, ['use_capacity', 'used_capacity', 'used']);
+      if (total > 0) {
+        const safeUsed = Math.min(used, total);
+        return { total, used: safeUsed, free: Math.max(0, total - safeUsed), ratio: safeUsed / total };
+      }
+    } catch {
+      // 换下一个端点重试
+    }
+  }
+  return null;
+}
+
+async function deleteDriveFile(fid: string, cookie: string): Promise<boolean> {
+  try {
+    const response = await fetch(`${QUARK_API}/file/delete?pr=ucpro&fr=pc&uc_param_str=`, {
+      method: 'POST',
+      headers: { ...quarkHeaders(cookie), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action_type: 2, filelist: [fid], exclude_fids: [] }),
+      signal: AbortSignal.timeout(15000),
+    });
+    const body = (await response.json()) as { code?: number; message?: string };
+    if (Number(body.code) === 0) return true;
+    console.error('[quark] 删除缓存文件失败：', quarkErrorMessage(Number(body.code), body.message));
+    return false;
+  } catch (error) {
+    console.error('[quark] 删除缓存文件异常：', error);
+    return false;
+  }
+}
+
+/** 正在播放中、还在缓存有效期内的文件，清理时跳过 */
+function activePlaybackFids(): Set<string> {
+  const now = Date.now();
+  const fids = new Set<string>();
+  for (const item of savedFileCache.values()) {
+    if (item.expires > now) fids.add(item.fid);
+  }
+  for (const item of playUrlCache.values()) {
+    if (item.expires > now) fids.add(item.fid);
+  }
+  return fids;
+}
+
+/**
+ * 转存前检查网盘剩余空间：占用超过阈值（默认 70%）时，
+ * 只清理《影巢播放缓存》目录里最早转存的旧文件，用户自己原有目录和文件一律不碰。
+ */
+export async function ensureQuarkSpace(
+  neededBytes: number,
+  cookie = getQuarkCookie(),
+): Promise<{ space: QuarkSpaceInfo | null; removed: number; freed: number }> {
+  const space = await getQuarkSpace(cookie);
+  if (!space) return { space: null, removed: 0, freed: 0 };
+
+  const projected = (space.used + Math.max(0, neededBytes)) / space.total;
+  if (projected < config.quarkSpaceThreshold) return { space, removed: 0, freed: 0 };
+
+  const folderFid = await ensureSaveFolder(cookie);
+  const items = await listDriveFolder(folderFid, cookie);
+  const active = activePlaybackFids();
+  const candidates = items
+    .filter((item) => !item.dir && item.fid && !active.has(String(item.fid)))
+    .sort((left, right) => Number(left.created_at || 0) - Number(right.created_at || 0));
+
+  let removed = 0;
+  let freed = 0;
+  let used = space.used;
+  for (const item of candidates) {
+    if ((used + Math.max(0, neededBytes)) / space.total <= config.quarkSpaceTarget) break;
+    const fid = String(item.fid);
+    if (!(await deleteDriveFile(fid, cookie))) continue;
+    const size = Number(item.size || 0);
+    used = Math.max(0, used - size);
+    freed += size;
+    removed++;
+    // 已被删掉的转存文件不能再复用，顺手清掉缓存
+    for (const [key, value] of savedFileCache) {
+      if (value.fid === fid) savedFileCache.delete(key);
+    }
+    for (const [key, value] of playUrlCache) {
+      if (value.fid === fid) playUrlCache.delete(key);
+    }
+  }
+
+  if (removed > 0) {
+    console.log(
+      `[quark] 网盘占用 ${(space.ratio * 100).toFixed(1)}%，已清理《${QUARK_SAVE_FOLDER}》中 ${removed} 个旧文件，释放 ${formatBytes(freed)}`,
+    );
+  } else if (projected >= config.quarkSpaceThreshold) {
+    console.warn(
+      `[quark] 网盘占用 ${(space.ratio * 100).toFixed(1)}%，但《${QUARK_SAVE_FOLDER}》里没有可清理的旧文件`,
+    );
+  }
+  const safeUsed = Math.min(used, space.total);
+  return {
+    space: {
+      ...space,
+      used: safeUsed,
+      free: Math.max(0, space.total - safeUsed),
+      ratio: safeUsed / space.total,
+    },
+    removed,
+    freed,
+  };
 }
 
 async function resolveSaveTask(data: unknown, cookie: string): Promise<string> {
@@ -301,6 +453,9 @@ async function saveShareFile(
       (!file.size || Number(item.size || 0) === file.size),
   );
   if (existing?.fid) return { fid: String(existing.fid), reused: true };
+
+  // 每次真正转存前先看空间：占用超过阈值就先清理本目录的旧文件，避免转存直接失败。
+  await ensureQuarkSpace(file.size, cookie);
 
   const response = await fetch(
     `${QUARK_API}/share/sharepage/save?pr=ucpro&fr=pc&uc_param_str=`,
@@ -431,6 +586,7 @@ const savedFileCache = new Map<
 const playUrlCache = new Map<
   string,
   {
+    fid: string;
     url: string;
     driver: 'tv' | 'pc';
     line: QuarkPlayLine;
@@ -556,6 +712,7 @@ export async function resolveQuarkFileDownload(options: {
     driver = 'pc';
   }
   playUrlCache.set(playKey, {
+    fid: saved.fid,
     url: directUrl,
     driver,
     line,

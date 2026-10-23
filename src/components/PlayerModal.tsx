@@ -78,10 +78,12 @@ function tryOpenProtocol(url: string, fallbackUrl: string, playerKey: PlayerKey)
 export function PlayerModal({
   resource,
   files,
+  subject,
   onClose,
 }: {
   resource: Resource;
   files: QuarkFile[];
+  subject?: { id: string; title: string; poster: string };
   onClose: () => void;
 }) {
   const toast = useToast();
@@ -119,6 +121,34 @@ export function PlayerModal({
     defaultExternal: 'iina',
   });
   const platform = useMemo(() => detectPlatform(), []);
+
+  // 播放记录：同一部片只保留一条，进度以最近一次播放为准。
+  const saveHistory = useCallback(
+    (position?: number, duration?: number) => {
+      const subjectId = subject?.id || resource.subjectId;
+      if (!subjectId) return;
+      void api('/api/history', {
+        method: 'POST',
+        body: JSON.stringify({
+          subjectId,
+          title: subject?.title || resource.title,
+          poster: subject?.poster || '',
+          resourceId: resource.id,
+          resourceTitle: resource.title,
+          position,
+          duration,
+        }),
+      }).catch(() => {
+        // 记录失败不影响播放
+      });
+    },
+    [subject?.id, subject?.title, subject?.poster, resource.subjectId, resource.id, resource.title],
+  );
+
+  // 拿到播放地址即记一条「看过」，即使只用外部播放器播放也能出现在历史里。
+  useEffect(() => {
+    if (playUrl) saveHistory();
+  }, [playUrl, saveHistory]);
 
   useEffect(() => {
     api<{
@@ -417,7 +447,12 @@ export function PlayerModal({
               </span>
             </div>
           ) : playUrl ? (
-            <VideoPlayer key={playUrl} src={playUrl} format={playFormat} />
+            <VideoPlayer
+              key={playUrl}
+              src={playUrl}
+              format={playFormat}
+              onProgress={(position, duration) => saveHistory(position, duration)}
+            />
           ) : (
             <div className="player-placeholder">
               {resolving ? <Loader2 size={34} className="spin" /> : <MonitorPlay size={34} />}

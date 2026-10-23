@@ -7,6 +7,7 @@ import {
   Database,
   ExternalLink,
   HardDrive,
+  History,
   Info,
   Loader2,
   Pencil,
@@ -28,6 +29,7 @@ import type {
   Channel,
   ChannelType,
   Job,
+  QuarkSpaceResponse,
   RuntimeSettings,
   SettingsResponse,
 } from '../types';
@@ -70,6 +72,9 @@ export function SettingsPage() {
   const [runtime, setRuntime] = useState<RuntimeSettings | null>(null);
   const [player, setPlayer] = useState<SettingsResponse['player'] | null>(null);
   const [savingSettings, setSavingSettings] = useState(false);
+  const [space, setSpace] = useState<QuarkSpaceResponse | null>(null);
+  const [spaceError, setSpaceError] = useState('');
+  const [cleaningSpace, setCleaningSpace] = useState(false);
 
   const overview = useApi<AdminOverview>(() => api('/api/admin/overview'), []);
   const settings = useApi<SettingsResponse>(() => api('/api/settings'), []);
@@ -88,6 +93,40 @@ export function SettingsPage() {
     if (settings.data?.runtime) setRuntime(settings.data.runtime);
     if (settings.data?.player) setPlayer(settings.data.player);
   }, [settings.data]);
+
+  const loadSpace = () => {
+    api<QuarkSpaceResponse>('/api/quark/space')
+      .then((data) => {
+        setSpace(data);
+        setSpaceError('');
+      })
+      .catch((error: unknown) => {
+        setSpace(null);
+        setSpaceError(error instanceof Error ? error.message : '读取网盘空间失败');
+      });
+  };
+
+  useEffect(() => {
+    if (tab === 'cache') loadSpace();
+  }, [tab]);
+
+  const cleanSpace = async () => {
+    setCleaningSpace(true);
+    try {
+      const result = await api<{ removed: number; freedText: string }>('/api/quark/space/clean', {
+        method: 'POST',
+      });
+      toast.push(
+        result.removed > 0 ? `已清理 ${result.removed} 个缓存文件，释放 ${result.freedText}` : '没有需要清理的缓存文件',
+        'success',
+      );
+      loadSpace();
+    } catch (error) {
+      toast.push(error instanceof Error ? error.message : '整理失败', 'error');
+    } finally {
+      setCleaningSpace(false);
+    }
+  };
 
   useEffect(() => {
     if (!tvLogin) return;
@@ -444,12 +483,53 @@ export function SettingsPage() {
               icon={<Sparkles size={18} />}
             />
             <JobCard
+              title="刷新播放记录资源"
+              description="为最近播放的作品重新检索并缓存资源，同时优先巡检这些链接。"
+              running={runningJob === 'history-resources'}
+              onRun={() => runJob('history-resources')}
+              icon={<History size={18} />}
+            />
+            <JobCard
               title="巡检失效链接"
               description="批量检测缓存中的链接，标记失效或需要提取码的资源。"
               running={runningJob === 'validate'}
               onRun={() => runJob('validate')}
               icon={<ShieldCheck size={18} />}
             />
+          </div>
+
+          <div className="settings-card">
+            <div className="settings-card-head">
+              <h3>夸克网盘空间</h3>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={cleanSpace}
+                disabled={cleaningSpace}
+              >
+                {cleaningSpace ? <Loader2 size={15} className="spin" /> : <Trash2 size={15} />}
+                立即整理
+              </button>
+            </div>
+            {space ? (
+              <>
+                <div className="space-bar">
+                  <span
+                    className={space.space.percent >= space.threshold * 100 ? 'warn' : ''}
+                    style={{ width: `${Math.min(100, space.space.percent)}%` }}
+                  />
+                </div>
+                <p className="settings-hint">
+                  已用 {space.space.usedText} / {space.space.totalText}（{space.space.percent}%），
+                  剩余 {space.space.freeText}。占用超过 {Math.round(space.threshold * 100)}% 时，
+                  转存前会自动清理《影巢播放缓存》目录里的旧文件，你自己的目录不会被改动。
+                </p>
+              </>
+            ) : (
+              <p className="settings-hint">
+                {spaceError || '配置夸克 Cookie 后可查看剩余空间。'}
+              </p>
+            )}
           </div>
 
           {runtime ? (
@@ -497,6 +577,15 @@ export function SettingsPage() {
                     max={50}
                     value={runtime.hotRefreshLimit}
                     onChange={(event) => setRuntime({ ...runtime, hotRefreshLimit: Number(event.target.value) })}
+                  />
+                </label>
+                <label>
+                  <span>播放记录资源刷新间隔（小时）</span>
+                  <input
+                    type="number"
+                    min={1}
+                    value={runtime.historyRefreshHours ?? 6}
+                    onChange={(event) => setRuntime({ ...runtime, historyRefreshHours: Number(event.target.value) })}
                   />
                 </label>
                 <label className="switch-label">
@@ -948,7 +1037,7 @@ function JobRow({ job }: { job: Job }) {
   return (
     <div className="job-row">
       <span className="job-name">
-        {job.name === 'collections' ? '刷新榜单' : job.name === 'hot-resources' ? '热门资源' : job.name === 'validate' ? '链接巡检' : job.name}
+        {job.name === 'collections' ? '刷新榜单' : job.name === 'hot-resources' ? '热门资源' : job.name === 'history-resources' ? '播放记录资源' : job.name === 'validate' ? '链接巡检' : job.name}
       </span>
       <span className={`job-status ${job.status}`}>
         {job.status === 'ok' ? <CheckCircle2 size={13} /> : job.status === 'error' ? <XCircle size={13} /> : <Loader2 size={13} className="spin" />}

@@ -8,6 +8,7 @@ import type {
   CollectionItem,
   MediaType,
   NormalizedLink,
+  PlayHistoryItem,
   Resource,
   Subject,
 } from './types.js';
@@ -133,6 +134,21 @@ CREATE TABLE IF NOT EXISTS jobs (
   finished_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_name ON jobs(name, started_at DESC);
+
+CREATE TABLE IF NOT EXISTS play_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  subject_id TEXT NOT NULL UNIQUE,
+  title TEXT DEFAULT '',
+  poster TEXT DEFAULT '',
+  resource_id TEXT DEFAULT '',
+  resource_title TEXT DEFAULT '',
+  position REAL DEFAULT 0,
+  duration REAL DEFAULT 0,
+  completed INTEGER DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_play_history_updated ON play_history(updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
@@ -665,6 +681,127 @@ export function getTopHotSubjects(limit: number): Subject[] {
   return rows.map(rowToSubject);
 }
 
+function rowToPlayHistory(row: Record<string, unknown>): PlayHistoryItem {
+  return {
+    id: Number(row.id),
+    subjectId: String(row.subject_id || ''),
+    title: String(row.title || ''),
+    poster: String(row.poster || ''),
+    resourceId: String(row.resource_id || ''),
+    resourceTitle: String(row.resource_title || ''),
+    position: Number(row.position || 0),
+    duration: Number(row.duration || 0),
+    completed: Number(row.completed || 0) === 1,
+    resourceStatus: String(row.resource_status || ''),
+    resourceCheckedAt: Number(row.resource_checked_at || 0),
+    updatedAt: Number(row.updated_at || 0),
+  };
+}
+
+export function listPlayHistory(limit = 20): PlayHistoryItem[] {
+  const rows = db
+    .prepare(
+      `SELECT h.*, r.status AS resource_status, r.checked_at AS resource_checked_at
+       FROM play_history h
+       LEFT JOIN resources r ON r.id = h.resource_id
+       ORDER BY h.updated_at DESC LIMIT ?`,
+    )
+    .all(Math.max(1, Math.min(100, Math.floor(limit)))) as Record<string, unknown>[];
+  return rows.map(rowToPlayHistory);
+}
+
+/**
+ * 播放记录里用到的资源优先巡检：用户随时可能点「继续观看」，
+ * 这些链接失效后体验最差，所以放在普通复检之前处理。
+ */
+export function listHistoryStaleResources(limit: number, checkedBefore: number): Resource[] {
+  const rows = db
+    .prepare(
+      `SELECT r.* FROM resources r
+       JOIN play_history h ON h.subject_id = r.subject_id
+       WHERE (r.checked_at = 0 OR r.checked_at < ?)
+         AND (r.status <> 'invalid' OR r.fail_count < 5)
+       ORDER BY h.updated_at DESC, r.checked_at ASC
+       LIMIT ?`,
+    )
+    .all(checkedBefore, Math.max(1, limit)) as Record<string, unknown>[];
+  return rows.map(rowToResource);
+}
+
+/** 播放记录对应的影片，按最近播放排序，用于定期重新缓存资源 */
+export function listHistorySubjects(limit: number): Subject[] {
+  const rows = db
+    .prepare(
+      `SELECT s.* FROM subjects s
+       JOIN play_history h ON h.subject_id = s.id
+       ORDER BY h.updated_at DESC LIMIT ?`,
+    )
+    .all(Math.max(1, limit)) as Record<string, unknown>[];
+  return rows.map(rowToSubject);
+}
+
+export function savePlayHistory(input: {
+  subjectId: string;
+  title?: string;
+  poster?: string;
+  resourceId?: string;
+  resourceTitle?: string;
+  /** 已播放秒数；不传表示只更新影片信息，不改动已有进度 */
+  position?: number;
+  duration?: number;
+}): PlayHistoryItem | null {
+  const subjectId = input.subjectId?.trim();
+  if (!subjectId) return null;
+
+  const ts = now();
+  const duration = Number.isFinite(input.duration) ? Math.max(0, Number(input.duration)) : 0;
+  const hasPosition =
+    typeof input.position === 'number' && Number.isFinite(input.position) && input.position >= 0;
+  const rawPosition = hasPosition ? Number(input.position) : 0;
+  const position = duration > 0 ? Math.min(rawPosition, duration) : rawPosition;
+  const completed = hasPosition && duration > 0 && position / duration >= 0.95 ? 1 : 0;
+
+  db.prepare(
+    `INSERT INTO play_history
+       (subject_id, title, poster, resource_id, resource_title, position, duration, completed, created_at, updated_at)
+     VALUES
+       (@subjectId, @title, @poster, @resourceId, @resourceTitle, @position, @duration, @completed, @ts, @ts)
+     ON CONFLICT(subject_id) DO UPDATE SET
+       title = CASE WHEN excluded.title <> '' THEN excluded.title ELSE play_history.title END,
+       poster = CASE WHEN excluded.poster <> '' THEN excluded.poster ELSE play_history.poster END,
+       resource_id = CASE WHEN excluded.resource_id <> '' THEN excluded.resource_id ELSE play_history.resource_id END,
+       resource_title = CASE WHEN excluded.resource_title <> '' THEN excluded.resource_title ELSE play_history.resource_title END,
+       position = CASE WHEN @hasPosition = 1 THEN excluded.position ELSE play_history.position END,
+       duration = CASE WHEN excluded.duration > 0 THEN excluded.duration ELSE play_history.duration END,
+       completed = CASE WHEN @hasPosition = 1 THEN excluded.completed ELSE play_history.completed END,
+       updated_at = excluded.updated_at`,
+  ).run({
+    subjectId,
+    title: String(input.title || ''),
+    poster: String(input.poster || ''),
+    resourceId: String(input.resourceId || ''),
+    resourceTitle: String(input.resourceTitle || ''),
+    position,
+    duration,
+    completed,
+    hasPosition: hasPosition ? 1 : 0,
+    ts,
+  });
+
+  const row = db
+    .prepare('SELECT * FROM play_history WHERE subject_id = ?')
+    .get(subjectId) as Record<string, unknown> | undefined;
+  return row ? rowToPlayHistory(row) : null;
+}
+
+export function deletePlayHistory(subjectId: string): boolean {
+  return db.prepare('DELETE FROM play_history WHERE subject_id = ?').run(subjectId).changes > 0;
+}
+
+export function clearPlayHistory(): number {
+  return db.prepare('DELETE FROM play_history').run().changes;
+}
+
 export function getStats(): {
   subjects: number;
   movies: number;
@@ -941,6 +1078,7 @@ export function seedDefaults(): void {
       validateHours: config.validateHours,
       hotRefreshHours: config.hotRefreshHours,
       hotRefreshLimit: config.hotRefreshLimit,
+      historyRefreshHours: config.historyRefreshHours,
       schedulerEnabled: config.schedulerEnabled,
     });
   }
@@ -954,6 +1092,7 @@ export function getRuntimeSettings(): {
   validateHours: number;
   hotRefreshHours: number;
   hotRefreshLimit: number;
+  historyRefreshHours: number;
   schedulerEnabled: boolean;
 } {
   const merged = {
@@ -961,6 +1100,7 @@ export function getRuntimeSettings(): {
     validateHours: config.validateHours,
     hotRefreshHours: config.hotRefreshHours,
     hotRefreshLimit: config.hotRefreshLimit,
+    historyRefreshHours: config.historyRefreshHours,
     schedulerEnabled: config.schedulerEnabled,
     ...(getSetting<Record<string, unknown>>('runtime_settings') || {}),
   } as {
@@ -968,6 +1108,7 @@ export function getRuntimeSettings(): {
     validateHours: number;
     hotRefreshHours: number;
     hotRefreshLimit: number;
+    historyRefreshHours: number;
     schedulerEnabled: boolean;
   };
   // 环境变量是硬开关：显式关闭时不允许被数据库里的旧设置覆盖。

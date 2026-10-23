@@ -138,6 +138,24 @@ export interface SearchResponse {
   searchedAt: number;
 }
 
+export interface PlayHistoryItem {
+  id: number;
+  subjectId: string;
+  title: string;
+  poster: string;
+  resourceId: string;
+  resourceTitle: string;
+  /** 已播放秒数 */
+  position: number;
+  /** 视频总时长，未知为 0 */
+  duration: number;
+  completed: boolean;
+  /** 上次播放所用资源当前的可用状态，资源已被清理时为空 */
+  resourceStatus: string;
+  resourceCheckedAt: number;
+  updatedAt: number;
+}
+
 export interface QuarkFile {
   fid: string;
   name: string;

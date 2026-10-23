@@ -106,6 +106,8 @@ cloudflared tunnel --url http://localhost:8787
 | `PORT=8787` | 服务端口 |
 | `AUTH_USER` / `AUTH_PASS` | 可选访问密码，两者都填即启用 HTTP Basic 登录 |
 | `ALLOW_PRIVATE_HOSTS` | 允许自定义渠道/视频直链访问内网地址（默认 `false`） |
+| `HISTORY_REFRESH_HOURS` | 播放记录相关作品的资源刷新与优先巡检间隔（默认 6 小时） |
+| `QUARK_SPACE_THRESHOLD` | 网盘占用超过该比例时，转存前清理播放缓存目录（默认 0.7） |
 
 ## 🔐 安全提醒
 

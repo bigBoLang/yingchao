@@ -84,6 +84,16 @@ export function formatBytes(size: number): string {
   return `${value.toFixed(value >= 100 ? 0 : 1)} ${units[index]}`;
 }
 
+export function formatDuration(seconds: number): string {
+  if (!seconds || seconds < 0 || !Number.isFinite(seconds)) return '';
+  const total = Math.round(seconds);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  if (hours > 0) return `${hours} 小时 ${minutes} 分`;
+  if (minutes > 0) return `${minutes} 分钟`;
+  return `${total} 秒`;
+}
+
 export function initials(title: string): string {
   return (title || '影').slice(0, 2);
 }

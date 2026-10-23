@@ -9,8 +9,10 @@ import { isSameNetwork, lanUrls } from './lan.js';
 import {
   createChannel,
   createUser,
+  clearPlayHistory,
   db,
   deleteChannel,
+  deletePlayHistory,
   getChannel,
   getResource,
   getResourceStatsForSubjects,
@@ -21,9 +23,11 @@ import {
   listChannels,
   listCollections,
   listJobs,
+  listPlayHistory,
   listSubjects,
   now,
   recoverStaleJobs,
+  savePlayHistory,
   setSetting,
   updateChannel,
   upsertSubject,
@@ -43,8 +47,10 @@ import {
 } from './services/search.js';
 import { validateResource } from './validator.js';
 import {
+  ensureQuarkSpace,
   formatBytes,
   getQuarkCookie,
+  getQuarkSpace,
   parseQuarkShare,
   resolveQuarkFileDownload,
   resolveQuarkShare,
@@ -235,6 +241,84 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       reply.code(502);
       return { error: `豆瓣数据获取失败：${errorMessage(error)}` };
     }
+  });
+
+  // 夸克网盘空间：设置页展示剩余容量，也方便确认自动清理是否生效
+  app.get('/api/quark/space', async (_request, reply) => {
+    if (!getQuarkCookie()) {
+      reply.code(400);
+      return { error: '还没有配置夸克 Cookie' };
+    }
+    const space = await getQuarkSpace();
+    if (!space) {
+      reply.code(502);
+      return { error: '没能读取夸克网盘容量' };
+    }
+    return {
+      space: {
+        ...space,
+        totalText: formatBytes(space.total),
+        usedText: formatBytes(space.used),
+        freeText: formatBytes(space.free),
+        percent: Math.round(space.ratio * 1000) / 10,
+      },
+      threshold: config.quarkSpaceThreshold,
+    };
+  });
+
+  // 手动触发一次空间整理（只清理《影巢播放缓存》目录里的旧文件）
+  app.post('/api/quark/space/clean', async (_request, reply) => {
+    if (!getQuarkCookie()) {
+      reply.code(400);
+      return { error: '还没有配置夸克 Cookie' };
+    }
+    try {
+      const result = await ensureQuarkSpace(Number.MAX_SAFE_INTEGER);
+      return {
+        removed: result.removed,
+        freed: result.freed,
+        freedText: formatBytes(result.freed),
+        percent: result.space ? Math.round(result.space.ratio * 1000) / 10 : null,
+      };
+    } catch (error) {
+      reply.code(502);
+      return { error: error instanceof Error ? error.message : '整理失败' };
+    }
+  });
+
+  // 播放记录：按影片去重，记录最近一次播放的资源与进度
+  app.get('/api/history', async (request) => {
+    const query = request.query as { limit?: string };
+    const limit = Number(query.limit || 20);
+    return { items: listPlayHistory(Number.isFinite(limit) ? limit : 20) };
+  });
+
+  app.post('/api/history', async (request, reply) => {
+    const body = (request.body || {}) as Record<string, unknown>;
+    const subjectId = typeof body.subjectId === 'string' ? body.subjectId.trim() : '';
+    if (!subjectId) {
+      reply.code(400);
+      return { error: '缺少 subjectId' };
+    }
+    const item = savePlayHistory({
+      subjectId,
+      title: typeof body.title === 'string' ? body.title : '',
+      poster: typeof body.poster === 'string' ? body.poster : '',
+      resourceId: typeof body.resourceId === 'string' ? body.resourceId : '',
+      resourceTitle: typeof body.resourceTitle === 'string' ? body.resourceTitle : '',
+      position: typeof body.position === 'number' ? body.position : undefined,
+      duration: typeof body.duration === 'number' ? body.duration : undefined,
+    });
+    return { item };
+  });
+
+  app.delete('/api/history', async () => ({ removed: clearPlayHistory() }));
+
+  app.delete('/api/history/:subjectId', async (request, reply) => {
+    const { subjectId } = request.params as { subjectId: string };
+    const ok = deletePlayHistory(subjectId);
+    if (!ok) reply.code(404);
+    return { ok };
   });
 
   app.get('/api/subjects', async (request, reply) => {
@@ -510,6 +594,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
         'validateHours',
         'hotRefreshHours',
         'hotRefreshLimit',
+        'historyRefreshHours',
       ] as const) {
         const value = Number((body.runtime as Record<string, unknown>)[key]);
         if (Number.isFinite(value) && value >= 0) next[key] = value;
