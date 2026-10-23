@@ -114,8 +114,8 @@ export function PlayerModal({
   const [directHeaders, setDirectHeaders] = useState<Record<string, string>>({});
   const [line, setLine] = useState<'proxy' | 'direct'>('proxy');
   const [quality, setQuality] = useState<'transcode' | 'original'>('original');
-  // 分片线路：false = 2MB 小分片（起播快），true = 8MB 大分片（吞吐优先）。
-  const [bulk, setBulk] = useState(false);
+  // 分片线路：true = 8MB 大分片（吞吐优先，默认），false = 2MB 小分片（起播快）。
+  const [bulk, setBulk] = useState(true);
   const [playMeta, setPlayMeta] = useState<{
     line?: 'transcode' | 'original';
     driver?: 'tv' | 'pc';
@@ -438,67 +438,68 @@ export function PlayerModal({
     >
       <div className="player-layout">
         <div className="player-main">
-          {canPickQuality || directUrl ? (
+          {canPickQuality || canPickChunk || directUrl ? (
             <div className="player-lines">
+              {/* 三组互相独立：画质决定拿哪个文件，分片决定怎么并发拉，通道决定走不走本机代理。 */}
               {canPickQuality ? (
                 <>
+                  <span className="line-group">画质</span>
                   <button
                     type="button"
-                    className={`chip ${line === 'proxy' && quality === 'original' ? 'active' : ''}`}
-                    onClick={() => {
-                      setQuality('original');
-                      setLine('proxy');
-                    }}
+                    className={`chip ${quality === 'original' ? 'active' : ''}`}
+                    onClick={() => setQuality('original')}
                   >
-                    线路 A · 原画（原文件）
+                    原画（原文件）
                   </button>
                   <button
                     type="button"
-                    className={`chip ${line === 'proxy' && quality === 'transcode' ? 'active' : ''}`}
-                    onClick={() => {
-                      setQuality('transcode');
-                      setLine('proxy');
-                    }}
+                    className={`chip ${quality === 'transcode' ? 'active' : ''}`}
+                    onClick={() => setQuality('transcode')}
                   >
-                    线路 B · TV 转码（起播快）
+                    TV 转码（起播快）
                   </button>
                 </>
-              ) : (
-                <button
-                  type="button"
-                  className={`chip ${line === 'proxy' ? 'active' : ''}`}
-                  onClick={() => setLine('proxy')}
-                >
-                  线路 A · 代理（{bulk ? '8M' : '2M'} 分片）
-                </button>
-              )}
+              ) : null}
               {canPickChunk && line === 'proxy' ? (
                 <>
-                  <span className="line-hint">分片</span>
+                  <span className="line-group">分片</span>
+                  <button
+                    type="button"
+                    className={`chip ${bulk ? 'active' : ''}`}
+                    title="8MB 大分片，4~8 路自适应并发，吞吐优先"
+                    onClick={() => setBulk(true)}
+                  >
+                    8M · 推荐
+                  </button>
                   <button
                     type="button"
                     className={`chip ${bulk ? '' : 'active'}`}
+                    title="2MB 小分片，首屏回数据更快"
                     onClick={() => setBulk(false)}
                   >
                     2M · 起播快
                   </button>
-                  <button
-                    type="button"
-                    className={`chip ${bulk ? 'active' : ''}`}
-                    onClick={() => setBulk(true)}
-                  >
-                    8M · 4~8 路自适应
-                  </button>
                 </>
               ) : null}
               {directUrl ? (
-                <button
-                  type="button"
-                  className={`chip ${line === 'direct' ? 'active' : ''}`}
-                  onClick={() => setLine('direct')}
-                >
-                  {canPickQuality ? `直链 · ${quality === 'original' ? '原画' : '转码'}` : '线路 B · 直链（不经服务器）'}
-                </button>
+                <>
+                  <span className="line-group">通道</span>
+                  <button
+                    type="button"
+                    className={`chip ${line === 'proxy' ? 'active' : ''}`}
+                    onClick={() => setLine('proxy')}
+                  >
+                    代理（经服务器）
+                  </button>
+                  <button
+                    type="button"
+                    className={`chip ${line === 'direct' ? 'active' : ''}`}
+                    title={directUrl}
+                    onClick={() => setLine('direct')}
+                  >
+                    直链（不经服务器）
+                  </button>
+                </>
               ) : null}
               {canPickQuality && playMeta?.line ? (
                 <span className="line-hint" title={directUrl}>

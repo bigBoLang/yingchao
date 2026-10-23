@@ -9,7 +9,7 @@
 - **豆瓣同步**：正在热映、Top250、热门剧集、分类浏览
 - **多渠道检索**：PanSou（默认）、竹云盘搜、L9、小云搜索、盘万搜、QuarkPanSo、Telegram / 腾讯 QQ 频道、自定义 HTTP API
 - **夸克 / 移动云盘原生播放**：
-  - 夸克：转存 → 多分片并发拉流 → 代理直链，**4K 原盘 20+ MB/s**
+  - 夸克：转存 → 8M 分片并发拉流（4~8 路自适应） → 代理直链，局域网实测 7~9 MB/s
   - 移动云盘：HLS 代理重写 → 浏览器 / IINA / VLC 直接播
 - **资源智能排序**：可用优先 → 匹配度 → 最近见过，前 5 条折叠展开
 - **全平台外部播放器**：
@@ -86,7 +86,7 @@ cloudflared tunnel --url http://localhost:8787
 
 ## 🎬 4K 原盘播放演示
 
-> 夸克分享 60GB MKV → 转存 → 4 路并发拉流 → **IINA / VLC 硬解 4K HDR**
+> 夸克分享 60GB MKV → 转存 → 8M 分片并发拉流 → **IINA / VLC 硬解 4K HDR**
 
 ![4k](docs/screenshots/4k-playback.png)
 

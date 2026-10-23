@@ -2,10 +2,11 @@ import { quarkFetch as fetch } from './direct-fetch.js';
 import { config } from './config.js';
 import { saveSpeedSample } from './db.js';
 
-// 定时速度探针：从已缓存的播放直链里挑一条，用和播放完全相同的
-// 「2MB 分片 + 多路并发」方式拉几秒，把实测速度写库。
+// 定时速度探针：从已缓存的播放直链里挑一条，用和默认播放线路完全相同的
+// 「8MB 分片 + 多路并发」方式拉几秒，把实测速度写库。
 // 这样就能按天/时段对比，判断掉速是账号限流、CDN 节点还是运营商。
-const CHUNK_SIZE = 2 * 1024 * 1024;
+// 并发取 4~8 自适应区间的中位值，和播放时的平均并发对齐。
+const CHUNK_SIZE = 8 * 1024 * 1024;
 const CONCURRENCY = 6;
 const PROBE_SECONDS = 6;
 

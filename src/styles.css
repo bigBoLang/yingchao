@@ -2204,6 +2204,15 @@ h2 {
   margin-bottom: 10px;
 }
 
+.line-group {
+  display: inline-flex;
+  align-items: center;
+  padding-right: 1px;
+  color: var(--faint);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+}
+
 .line-hint {
   display: inline-flex;
   align-items: center;
