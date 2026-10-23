@@ -892,20 +892,31 @@ export function SettingsPage() {
                 ))}
               </div>
               <label className="form-inline">
-                <span>默认外部播放器</span>
+                <span>默认播放器（点击播放时自动调起）</span>
                 <select
                   value={player.defaultExternal}
                   onChange={(event) => setPlayer({ ...player, defaultExternal: event.target.value })}
                 >
+                  <option value="browser">浏览器（页面内播放）</option>
                   <option value="iina">IINA</option>
                   <option value="vlc">VLC</option>
                   <option value="potplayer">PotPlayer</option>
-                  <option value="mpv">MPV</option>
-                  <option value="infuse">Infuse (iOS)</option>
+                  <option value="infuse">Infuse (iOS/macOS)</option>
                   <option value="vlcIos">VLC iOS</option>
                   <option value="nplayer">nPlayer</option>
+                  <option value="mxplayer">MX Player (Android)</option>
+                  <option value="vlcAndroid">VLC Android</option>
+                  <option value="kmplayer">KMPlayer (Android)</option>
+                  <option value="mpv">MPV（复制命令）</option>
                 </select>
               </label>
+              <div className="settings-note">
+                <Info size={16} />
+                <p>
+                  选定后，点击任意资源的播放按钮会先解析直链，再用这个播放器直接打开；选择「浏览器」则留在页面内播放。
+                  播放弹窗里也有同一个下拉框，可以随时切换。MPV 没有 URL 协议，选择它会自动复制播放命令。
+                </p>
+              </div>
               <div className="settings-note">
                 <Info size={16} />
                 <p>

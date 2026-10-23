@@ -21,6 +21,9 @@
 | iOS | Infuse | Infuse / VLC / nPlayer |
 | Android | MX Player | MX Player / VLC / KMPlayer |
 
+在「设置 → 播放器」或播放弹窗里选定默认播放器后，点击播放会先解析直链、再直接调起该播放器；
+选择「浏览器」则留在页面内播放（播放弹窗里可随时改，改完立刻生效）。
+
 - **代理可选**：代理开着优先走代理、关掉自动直连，播放流量始终直连优先
 - **Cloudflare Tunnel**：零公网 IP、自动 HTTPS、可加 Access 认证
 

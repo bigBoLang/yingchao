@@ -2229,6 +2229,26 @@ h2 {
   line-height: 1.6;
 }
 
+.player-default-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.player-default-pick select {
+  height: 30px;
+  padding: 0 26px 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--text);
+  background: var(--panel-2);
+  outline: none;
+  font-size: 11px;
+}
+
 .player-files {
   display: flex;
   flex-direction: column;

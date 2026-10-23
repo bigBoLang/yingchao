@@ -75,6 +75,21 @@ import {
 import { getQuarkNetworkMode, mediaFetch, quarkFetch } from './direct-fetch.js';
 import { runJob } from './scheduler.js';
 
+// 可被选为「默认播放器」的取值；browser 表示留在页面内播放。
+const DEFAULT_PLAYERS = [
+  'browser',
+  'iina',
+  'vlc',
+  'potplayer',
+  'mpv',
+  'infuse',
+  'vlcIos',
+  'nplayer',
+  'mxplayer',
+  'vlcAndroid',
+  'kmplayer',
+] as const;
+
 const PLAYER_DEFAULTS = {
   iina: true,
   vlc: true,
@@ -83,7 +98,10 @@ const PLAYER_DEFAULTS = {
   infuse: true,
   vlcIos: true,
   nplayer: true,
-  defaultExternal: 'iina',
+  mxplayer: true,
+  vlcAndroid: true,
+  kmplayer: true,
+  defaultExternal: 'browser',
 };
 
 function errorMessage(error: unknown): string {
@@ -547,7 +565,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
         linkMode: getQuarkTvLinkMode(),
       },
       quarkNetMode: getQuarkNetworkMode(),
-      player: getSetting('player_prefs', PLAYER_DEFAULTS),
+      player: { ...PLAYER_DEFAULTS, ...getSetting('player_prefs', {}) },
       runtime: getRuntimeSettings(),
       config: {
         port: config.port,
@@ -584,7 +602,15 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       setSetting('quark_network_mode', body.quarkNetMode);
     }
     if (body.player && typeof body.player === 'object') {
-      setSetting('player_prefs', { ...PLAYER_DEFAULTS, ...body.player });
+      // 基于已保存的设置做合并，避免只改默认播放器时把其它开关重置成默认值。
+      const current = { ...PLAYER_DEFAULTS, ...getSetting<Record<string, unknown>>('player_prefs', {}) };
+      const next: Record<string, unknown> = { ...current, ...body.player };
+      const chosen = String(next.defaultExternal || 'browser');
+      // 只接受已知播放器，避免前端传入无效值后每次点击播放都调不起来。
+      if (!(DEFAULT_PLAYERS as readonly string[]).includes(chosen)) {
+        next.defaultExternal = 'browser';
+      }
+      setSetting('player_prefs', next);
     }
     if (body.runtime && typeof body.runtime === 'object') {
       const current = getRuntimeSettings();
@@ -615,7 +641,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
         linkMode: getQuarkTvLinkMode(),
       },
       quarkNetMode: getQuarkNetworkMode(),
-      player: getSetting('player_prefs', PLAYER_DEFAULTS),
+      player: { ...PLAYER_DEFAULTS, ...getSetting('player_prefs', {}) },
       runtime: getRuntimeSettings(),
     };
   });
@@ -834,7 +860,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       version: config.version,
       hasQuarkCookie: Boolean(getQuarkCookie()),
       enabledChannels: listChannels(true).length,
-      player: getSetting('player_prefs', PLAYER_DEFAULTS),
+      player: { ...PLAYER_DEFAULTS, ...getSetting('player_prefs', {}) },
       quarkTv: {
         loggedIn: isQuarkTvLoggedIn(),
         enabled: isQuarkTvEnabled(),

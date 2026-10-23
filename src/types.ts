@@ -181,6 +181,9 @@ export interface SettingsResponse {
     infuse: boolean;
     vlcIos: boolean;
     nplayer: boolean;
+    mxplayer: boolean;
+    vlcAndroid: boolean;
+    kmplayer: boolean;
     defaultExternal: string;
   };
   runtime: RuntimeSettings;

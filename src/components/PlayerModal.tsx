@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
   Check,
   Copy,
@@ -49,6 +49,25 @@ const PLAYER_DOWNLOADS: Record<string, { name: string; url: string; desc: string
 };
 
 type PlayerKey = keyof typeof PLAYER_DOWNLOADS;
+
+/** 可作为「默认播放器」的选项；browser 表示留在页面内播放。 */
+const DEFAULT_PLAYER_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'browser', label: '浏览器（页面内播放）' },
+  { value: 'iina', label: 'IINA（macOS）' },
+  { value: 'vlc', label: 'VLC' },
+  { value: 'potplayer', label: 'PotPlayer（Windows）' },
+  { value: 'infuse', label: 'Infuse（iOS/macOS）' },
+  { value: 'vlcIos', label: 'VLC iOS' },
+  { value: 'nplayer', label: 'nPlayer（iOS）' },
+  { value: 'mxplayer', label: 'MX Player（Android）' },
+  { value: 'vlcAndroid', label: 'VLC Android' },
+  { value: 'kmplayer', label: 'KMPlayer（Android）' },
+  { value: 'mpv', label: 'MPV（复制命令）' },
+];
+
+function isExternalPlayer(value: string): value is PlayerKey {
+  return value !== 'browser' && value in PLAYER_DOWNLOADS;
+}
 
 function tryOpenProtocol(url: string, fallbackUrl: string, playerKey: PlayerKey): void {
   // 尝试打开协议
@@ -118,7 +137,7 @@ export function PlayerModal({
     mxplayer: true,
     vlcAndroid: true,
     kmplayer: true,
-    defaultExternal: 'iina',
+    defaultExternal: 'browser',
   });
   const platform = useMemo(() => detectPlatform(), []);
 
@@ -305,7 +324,7 @@ export function PlayerModal({
   }, [playToken, line, playFormat]);
 
   const lineUrl = line === 'direct' && directUrl ? directUrl : playUrl;
-  const protocols = useMemo(
+  const protocols = useMemo<Record<PlayerKey, string>>(
     () => ({
       iina: lineUrl ? `iina://weblink?url=${encodeURIComponent(lineUrl)}` : '',
       // macOS VLC 用 vlc://，iOS/Android 用 x-callback-url
@@ -348,6 +367,52 @@ export function PlayerModal({
       : `mpv "${directUrl}"`
     : '';
   const showDirect = line === 'direct' && Boolean(directUrl);
+  const defaultPlayer = player.defaultExternal || 'browser';
+  // 配置了默认外部播放器时，解析完直链直接调起它，页面内不再重复拉流。
+  const [forceBrowser, setForceBrowser] = useState(false);
+  const autoExternal = isExternalPlayer(defaultPlayer) && !forceBrowser;
+
+  useEffect(() => {
+    setForceBrowser(false);
+  }, [file?.fid]);
+
+  // 每次拿到新的播放地址，就用「默认播放器」直接打开一次；
+  // 同一个地址只自动打开一次，切换线路或换文件时才再次调起。
+  const autoOpenedUrl = useRef('');
+  useEffect(() => {
+    // 等 /api/config 拿到真实的默认播放器后再判断，避免先用占位值误调起。
+    if (!configLoaded) return;
+    if (!lineUrl || showDirect) return;
+    if (!isExternalPlayer(defaultPlayer)) return;
+    if (autoOpenedUrl.current === lineUrl) return;
+    autoOpenedUrl.current = lineUrl;
+
+    if (defaultPlayer === 'mpv') {
+      void copy(mpvCommand || `mpv "${playUrl}"`, '已复制 MPV 命令');
+      return;
+    }
+    const protocol = protocols[defaultPlayer];
+    if (protocol) handlePlayerClick(defaultPlayer, protocol);
+  }, [lineUrl, showDirect, defaultPlayer, protocols, handlePlayerClick, mpvCommand, playUrl, configLoaded]);
+
+  const saveDefaultPlayer = async (value: string) => {
+    const next = { ...player, defaultExternal: value };
+    setPlayer(next);
+    try {
+      await api('/api/settings', {
+        method: 'PUT',
+        body: JSON.stringify({ player: next }),
+      });
+      toast.push(
+        isExternalPlayer(value)
+          ? `以后点击播放将直接用 ${PLAYER_DOWNLOADS[value].name} 打开`
+          : '以后点击播放将在页面内播放',
+        'success',
+      );
+    } catch (error) {
+      toast.push(error instanceof Error ? error.message : '保存默认播放器失败', 'error');
+    }
+  };
 
   return (
     <Modal
@@ -445,6 +510,28 @@ export function PlayerModal({
                 流量直接走网盘 CDN，不经过影巢服务器，但只有一条连接、没有并发加速；
                 浏览器和 VLC / IINA 无法携带防盗链请求头，请用下方「MPV 命令」在终端播放。
               </span>
+            </div>
+          ) : playUrl && autoExternal ? (
+            <div className="player-placeholder">
+              <ExternalLink size={34} />
+              <p>
+                {defaultPlayer === 'mpv'
+                  ? '已复制 MPV 命令'
+                  : `已用 ${PLAYER_DOWNLOADS[defaultPlayer as PlayerKey].name} 打开`}
+              </p>
+              <span>
+                {defaultPlayer === 'mpv'
+                  ? '把命令粘贴到终端即可播放；想留在页面内播放可以点下面的按钮。'
+                  : '外部播放器会接管播放，页面内不再重复拉流；想留在页面内可以点下面的按钮。'}
+              </span>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => setForceBrowser(true)}
+              >
+                <MonitorPlay size={15} />
+                改用浏览器播放
+              </button>
             </div>
           ) : playUrl ? (
             <VideoPlayer
@@ -647,6 +734,21 @@ export function PlayerModal({
               <FolderOpen size={15} />
               打开原分享
             </a>
+            {lineUrl && !showDirect ? (
+              <label className="player-default-pick" title="选定后，以后点击播放会直接用这个播放器打开">
+                <span>默认播放器</span>
+                <select
+                  value={defaultPlayer}
+                  onChange={(event) => void saveDefaultPlayer(event.target.value)}
+                >
+                  {DEFAULT_PLAYER_OPTIONS.map((item) => (
+                    <option key={item.value} value={item.value}>
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
           </div>
 
           <p className="player-tip">
