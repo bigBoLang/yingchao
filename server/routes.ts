@@ -111,6 +111,16 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+// 播放代理的分片大小来自前端，属于外部输入，限定在合理区间内。
+const MIN_CHUNK_MB = 1;
+const MAX_CHUNK_MB = 16;
+
+function normalizeChunkMb(value: unknown): number | undefined {
+  const mb = Math.round(Number(value));
+  if (!Number.isFinite(mb) || mb < MIN_CHUNK_MB || mb > MAX_CHUNK_MB) return undefined;
+  return mb;
+}
+
 // 播放代理的实时流量统计：按播放 token 累计已输出的字节，前端轮询换算成网速。
 // 同时把整段播放的平均/峰值速度落库，用于长期对比（重启也不会丢）。
 const playTraffic = new Map<
@@ -841,6 +851,8 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       name?: string;
       size?: number;
       line?: 'transcode' | 'original';
+      /** 分片线路：8 表示 8MB 大分片（4~8 路自适应），其余/缺省用 2MB。 */
+      chunkMb?: number;
     };
     if (!body.fid) {
       reply.code(400);
@@ -883,6 +895,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
           fileName: body.name || '',
           subjectId: resource.subjectId || undefined,
         },
+        chunkMb: normalizeChunkMb(body.chunkMb),
       });
       // 直链模式：夸克 CDN 需要 Cookie + Referer，播放器直连时得自己带上。
       // 经过 Cloudflare 时不下发 Cookie，避免公网访问者直接拿到登录态。
@@ -1039,14 +1052,19 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       if (isQuark && request.method !== 'HEAD' && !isHlsUrl(target.url)) {
         const abortParallel = new AbortController();
         reply.raw.on('close', () => abortParallel.abort());
+        // 线路由 token 里的 c 决定：8MB 大分片从 4 路起步（在飞数据量大，
+        // 起步就拉满容易互相抢速），2MB 默认从 6 路起步，两者都在 4~8 路自适应。
+        const chunkMb = target.chunkMb || 0;
         const parallel = await openQuarkRangeStream({
           url: target.url,
           headers,
           range,
           signal: abortParallel.signal,
+          ...(chunkMb ? { chunkSize: chunkMb * 1024 * 1024 } : {}),
+          ...(chunkMb >= 8 ? { concurrency: 4 } : {}),
           // 统计从 CDN 实际拉取的字节，前端换算成实时网速。
           onBytes: (bytes) => addPlayBytes(token, bytes),
-          // 并发数交给 openQuarkRangeStream 自适应（4~8 路，初始 6 路），
+          // 并发数交给 openQuarkRangeStream 自适应（4~8 路），
           // 变化时同步给前端展示。
           onConcurrency: (value) => {
             playTrafficEntry(token).concurrency = value;

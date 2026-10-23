@@ -620,6 +620,8 @@ export async function resolveQuarkFileDownload(options: {
   line?: QuarkPlayLine;
   /** 写进播放 token 的元信息，用于速度采样统计。 */
   meta?: PlayTokenMeta;
+  /** 播放代理的分片大小（MB）；不传用默认 2MB。 */
+  chunkMb?: number;
 }): Promise<{
   proxyUrl: string;
   directUrl: string;
@@ -685,7 +687,13 @@ export async function resolveQuarkFileDownload(options: {
   const cachedPlay = playUrlCache.get(playKey);
   if (cachedPlay && cachedPlay.expires > Date.now()) {
     return {
-      proxyUrl: signPlayUrl(cachedPlay.url, 'https://pan.quark.cn/', 6 * 3600, options.meta),
+      proxyUrl: signPlayUrl(
+        cachedPlay.url,
+        'https://pan.quark.cn/',
+        6 * 3600,
+        options.meta,
+        options.chunkMb,
+      ),
       directUrl: cachedPlay.url,
       savedFid: saved.fid,
       reused: saved.reused,
@@ -723,7 +731,7 @@ export async function resolveQuarkFileDownload(options: {
   });
   pruneCache(playUrlCache, 500);
   return {
-    proxyUrl: signPlayUrl(directUrl, 'https://pan.quark.cn/', 6 * 3600, options.meta),
+    proxyUrl: signPlayUrl(directUrl, 'https://pan.quark.cn/', 6 * 3600, options.meta, options.chunkMb),
     directUrl,
     savedFid: saved.fid,
     reused: saved.reused,
@@ -815,12 +823,15 @@ export function signPlayUrl(
   referer = '',
   ttlSeconds = 6 * 3600,
   meta?: PlayTokenMeta,
+  chunkMb?: number,
 ): string {
   const payload = JSON.stringify({
     u: url,
     r: referer,
     e: Math.floor(Date.now() / 1000) + ttlSeconds,
     ...(meta ? { m: meta } : {}),
+    // 分片大小随 token 一起签名：播放时按签名值决定并发拉流的分块策略。
+    ...(chunkMb ? { c: chunkMb } : {}),
   });
   const encoded = Buffer.from(payload).toString('base64url');
   const signature = crypto
@@ -901,7 +912,7 @@ export function pickCachedPlayTarget(): {
 
 export function verifyPlayToken(
   token: string,
-): { url: string; referer: string; meta?: PlayTokenMeta } | null {
+): { url: string; referer: string; meta?: PlayTokenMeta; chunkMb?: number } | null {
   if (token.startsWith('s.')) {
     const id = token.slice(2);
     const target = shortPlayTargets.get(id);
@@ -927,9 +938,15 @@ export function verifyPlayToken(
       r?: string;
       e?: number;
       m?: PlayTokenMeta;
+      c?: number;
     };
     if (!payload.u || !payload.e || payload.e < Math.floor(Date.now() / 1000)) return null;
-    return { url: payload.u, referer: payload.r || '', ...(payload.m ? { meta: payload.m } : {}) };
+    return {
+      url: payload.u,
+      referer: payload.r || '',
+      ...(payload.m ? { meta: payload.m } : {}),
+      ...(typeof payload.c === 'number' && payload.c > 0 ? { chunkMb: payload.c } : {}),
+    };
   } catch {
     return null;
   }

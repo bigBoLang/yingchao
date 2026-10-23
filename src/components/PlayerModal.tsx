@@ -114,6 +114,8 @@ export function PlayerModal({
   const [directHeaders, setDirectHeaders] = useState<Record<string, string>>({});
   const [line, setLine] = useState<'proxy' | 'direct'>('proxy');
   const [quality, setQuality] = useState<'transcode' | 'original'>('original');
+  // 分片线路：false = 2MB 小分片（起播快），true = 8MB 大分片（吞吐优先）。
+  const [bulk, setBulk] = useState(false);
   const [playMeta, setPlayMeta] = useState<{
     line?: 'transcode' | 'original';
     driver?: 'tv' | 'pc';
@@ -188,6 +190,8 @@ export function PlayerModal({
   const shareUrl = resource.url;
   const isMobile = resource.cloudType === 'mobile';
   const canPickQuality = tvReady && !isMobile && Boolean(file?.fid);
+  // 分片线路只对夸克代理播放有意义，移动云盘走另一套解析。
+  const canPickChunk = !isMobile && Boolean(file?.fid);
   const { ios, android, mac, win } = platform;
 
   useEffect(() => {
@@ -251,6 +255,8 @@ export function PlayerModal({
         name: file.name,
         size: file.size,
         line: quality,
+        // 8MB 大分片线路交给服务端按签名 token 处理并发。
+        chunkMb: bulk ? 8 : undefined,
       }),
     })
       .then((result) => {
@@ -280,7 +286,7 @@ export function PlayerModal({
     return () => {
       cancelled = true;
     };
-  }, [file?.fid, file?.proxyUrl, file?.directUrl, resource.id, quality, configLoaded]);
+  }, [file?.fid, file?.proxyUrl, file?.directUrl, resource.id, quality, bulk, configLoaded]);
 
   // 从代理播放地址里取 token，用于查询服务端实时流量。
   const playToken = useMemo(() => {
@@ -463,9 +469,28 @@ export function PlayerModal({
                   className={`chip ${line === 'proxy' ? 'active' : ''}`}
                   onClick={() => setLine('proxy')}
                 >
-                  线路 A · 代理（4 路并发）
+                  线路 A · 代理（{bulk ? '8M' : '2M'} 分片）
                 </button>
               )}
+              {canPickChunk && line === 'proxy' ? (
+                <>
+                  <span className="line-hint">分片</span>
+                  <button
+                    type="button"
+                    className={`chip ${bulk ? '' : 'active'}`}
+                    onClick={() => setBulk(false)}
+                  >
+                    2M · 起播快
+                  </button>
+                  <button
+                    type="button"
+                    className={`chip ${bulk ? 'active' : ''}`}
+                    onClick={() => setBulk(true)}
+                  >
+                    8M · 4~8 路自适应
+                  </button>
+                </>
+              ) : null}
               {directUrl ? (
                 <button
                   type="button"
