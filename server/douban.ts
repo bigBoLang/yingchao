@@ -1,4 +1,5 @@
 import { config } from './config.js';
+import { smartFetch } from './direct-fetch.js';
 import {
   getCollectionSubjects,
   getCollectionUpdatedAt,
@@ -90,7 +91,7 @@ function schedule<T>(task: () => Promise<T>): Promise<T> {
 }
 
 async function doubanFetch(url: string, timeoutMs = 12000): Promise<Response> {
-  const response = await fetch(url, {
+  const response = await smartFetch(url, {
     headers: {
       'User-Agent': config.userAgent,
       Referer: 'https://movie.douban.com/',

@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { gunzipSync } from 'node:zlib';
 import { config } from './config.js';
+import { smartFetch } from './direct-fetch.js';
 import { signPlayUrl } from './quark.js';
 import type { QuarkFile, QuarkResolveResult, Resource } from './types.js';
 
@@ -81,7 +82,7 @@ async function mobileRequest<T>(
 ): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(`${MOBILE_API}${pathname}`, {
+    response = await smartFetch(`${MOBILE_API}${pathname}`, {
       method: 'POST',
       headers: {
         'User-Agent': config.userAgent,

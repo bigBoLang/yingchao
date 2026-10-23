@@ -11,7 +11,7 @@
 - **夸克 / 移动云盘原生播放**：
   - 夸克：转存 → 多分片并发拉流 → 代理直链，**4K 原盘 20+ MB/s**
   - 移动云盘：HLS 代理重写 → 浏览器 / IINA / VLC 直接播
-- **资源智能排序**：可用优先 → 匹配度 → 最近见过，前 3 条折叠展开
+- **资源智能排序**：可用优先 → 匹配度 → 最近见过，前 5 条折叠展开
 - **全平台外部播放器**：
 
 | 平台 | 推荐 | 支持列表 |
@@ -21,7 +21,7 @@
 | iOS | Infuse | Infuse / VLC / nPlayer |
 | Android | MX Player | MX Player / VLC / KMPlayer |
 
-- **用户系统**：JWT + HttpOnly Cookie，保护设置/渠道/管理接口
+- **代理可选**：代理开着优先走代理、关掉自动直连，播放流量始终直连优先
 - **Cloudflare Tunnel**：零公网 IP、自动 HTTPS、可加 Access 认证
 
 ## 🚀 快速开始
@@ -73,7 +73,9 @@ cloudflared tunnel --url http://localhost:8787
 | 环境变量 | 说明 |
 |----------|------|
 | `QUARK_COOKIE` | 夸克登录 Cookie（设置页也可填） |
-| `APP_SECRET` | JWT 签名密钥，**生产环境必改** |
+| `APP_SECRET` | 播放链接签名密钥，**生产环境必改** |
+| `HTTPS_PROXY` | 可选出站代理；代理在线时优先使用，离线时自动直连 |
+| `PLAY_PROXY_MODE` | `tunnel`（跟随访问域名，默认）/ `direct`（配合 `PUBLIC_IP` 直连） |
 | `HOST=0.0.0.0` | 局域网访问 |
 | `PORT=8787` | 服务端口 |
 

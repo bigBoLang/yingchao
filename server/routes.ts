@@ -63,7 +63,7 @@ import {
   pollQuarkTvLogin,
   startQuarkTvLogin,
 } from './quark-tv.js';
-import { getQuarkNetworkMode } from './direct-fetch.js';
+import { getQuarkNetworkMode, mediaFetch, quarkFetch } from './direct-fetch.js';
 import { runJob } from './scheduler.js';
 
 const PLAYER_DEFAULTS = {
@@ -849,8 +849,10 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
 
       try {
         // 走到这里说明是单连接拉流（HLS、小范围请求或并发失败回退）。
+        // 必须走直连优先的上游请求：代理软件没开时，全局 fetch 会直接连不上。
         playTrafficEntry(token).concurrency = 1;
-        const upstream = await fetch(target.url, {
+        const upstreamFetch = isQuark ? quarkFetch : mediaFetch;
+        const upstream = await upstreamFetch(target.url, {
           method: request.method === 'HEAD' ? 'HEAD' : 'GET',
           headers,
           redirect: 'follow',

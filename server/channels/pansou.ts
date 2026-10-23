@@ -1,5 +1,6 @@
 import type { Channel, CloudType, NormalizedLink, SearchQuery } from '../types.js';
 import { config } from '../config.js';
+import { smartFetch } from '../direct-fetch.js';
 import {
   cleanHtml,
   firstString,
@@ -74,7 +75,7 @@ export async function searchPansou(
     headers.Authorization = `Bearer ${apiKey}`;
   }
 
-  const response = await fetch(`${baseUrl}${searchPath}`, {
+  const response = await smartFetch(`${baseUrl}${searchPath}`, {
     method: 'POST',
     headers,
     body: JSON.stringify(payload),

@@ -1,5 +1,6 @@
 import type { Channel, CloudType, NormalizedLink, SearchQuery } from '../types.js';
 import { config } from '../config.js';
+import { smartFetch } from '../direct-fetch.js';
 import {
   mapLimit,
   normalizeCloudType,
@@ -34,7 +35,7 @@ interface ZhuyunItem {
 
 async function getBrowserCookie(baseUrl: string): Promise<string> {
   try {
-    const response = await fetch(`${baseUrl}/api/other/browser_token`, {
+    const response = await smartFetch(`${baseUrl}/api/other/browser_token`, {
       method: 'POST',
       headers: {
         'User-Agent': config.userAgent,
@@ -62,7 +63,7 @@ async function decodeLink(
   const rawUrl = String(item.url || '');
   if (/^https?:|^magnet:|^ed2k:/i.test(rawUrl)) return rawUrl;
   try {
-    const response = await fetch(`${baseUrl}/api/other/save_url`, {
+    const response = await smartFetch(`${baseUrl}/api/other/save_url`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -104,7 +105,7 @@ async function readSse(
   const items: ZhuyunItem[] = [];
   let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
   try {
-    const response = await fetch(url, {
+    const response = await smartFetch(url, {
       headers: {
         Accept: 'text/event-stream',
         'Cache-Control': 'no-cache',

@@ -1,4 +1,5 @@
 import { config } from './config.js';
+import { smartFetch } from './direct-fetch.js';
 import {
   listStaleResources,
   now,
@@ -35,7 +36,7 @@ async function checkHttpLink(
       Accept: '*/*',
     };
     if (method === 'GET') headers.Range = 'bytes=0-0';
-    return fetch(url, {
+    return smartFetch(url, {
       method,
       headers,
       redirect: 'follow',

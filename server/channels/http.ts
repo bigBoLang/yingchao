@@ -1,5 +1,6 @@
 import type { Channel, NormalizedLink, SearchQuery } from '../types.js';
 import { config } from '../config.js';
+import { smartFetch } from '../direct-fetch.js';
 import {
   firstString,
   normalizeLink,
@@ -79,7 +80,7 @@ export async function searchHttp(
     }
   }
 
-  const response = await fetch(endpoint, {
+  const response = await smartFetch(endpoint, {
     method,
     headers,
     body,
